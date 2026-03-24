@@ -9,11 +9,16 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"time"
 )
 
+// Sizing constants for errTrace.
+// traceSize is the maximum number of (PC, message) pairs retained in a trace;
+// middle entries are compressed out beyond this limit.
+// filelineFmt and missFileline are the formatted file/line templates used
+// in trace output; missFileline is substituted when symbol resolution fails.
 const (
 	traceSize    = 8
-	maxCached    = 32
 	filelineFmt  = "\n  file: %s line: %d\n"
 	missFileline = "\n  file: ? line: ?\n"
 )
@@ -38,53 +43,51 @@ type Error interface {
 	Trace() string
 
 	// Classify overrides the sentinel identity of this error from the caller's
-	// perspective. It is intended for use by packages that receive a foreign error
-	// and want to assert their own interpretation of what that error means,
-	// without changing the underlying cause.
+	// perspective. Intended for packages that receive a foreign error and want
+	// to assert their own interpretation without changing the underlying cause.
 	//
 	// Example:
 	//
-	//	err = raised.Trace(err, flk, "storage unavailable")
+	//	err = raised.Trace(err, "storage unavailable")
 	//	err.Classify(ErrServiceUnavailable)
 	Classify(SentinelError)
 }
 
 // errTrace is the private implementation of the Error interface.
-// It records the propagation path of an error as a sequence of (PC, message)
-// pairs accumulated by successive Trace calls. Memory use is bounded: up to
-// traceSize steps are stored in fixed-size arrays, with older middle entries
-// compressed out when the limit is exceeded, preserving the first and most
-// recent call sites.
+// It records the propagation path as a fixed-size sequence of (PC, message)
+// pairs; middle entries are compressed out when traceSize is exceeded,
+// preserving the first and most recent call sites.
 //
-// Concurrency: errTrace is safe for concurrent use. A single mutex guards
-// all fields including the lazily computed _summary and _trace strings.
-// Contention is expected to be low since errors are typically created on
-// one goroutine and read on another after being passed over a channel.
+// _summary and _trace are lazily populated on first use and invalidated
+// whenever a new propagation step is added. They are write-through caches
+// backed by the package-level summaryCache and traceCache.
+//
+// Concurrency: all fields are guarded by mut. Contention is expected to be
+// low since errors are typically written on one goroutine and read on another.
 type errTrace struct {
-	// mut contention expected to be low but errTrace may be transmitted over channel.
+	// mut guards all fields. Contention is expected to be low but errTrace
+	// may be transmitted over a channel between goroutines.
 	mut sync.Mutex
 
-	// the root error, set once at construction and never mutated.
+	// cause is the root error, set once at construction and never mutated.
 	cause error
 
-	// TODO: doc
+	// class is the sentinel assigned via Classify, overriding the error's
+	// identity for errors.Is matching without changing cause.
 	class SentinelError
 
-	// index of the next free slot in pcs/msgs.
-	// also encodes total Trace call count including compressed-out entries.
+	// next is the index of the next free slot in pcs/msgs, and encodes the
+	// total Trace call count including compressed-out entries.
 	next int
 
-	// program counter for each Trace call site.
+	// pcs holds the program counter for each recorded Trace call site.
 	pcs [traceSize]uintptr
 
-	// message string supplied at each Trace call site, parallel to pcs.
+	// msgs holds the message string supplied at each Trace call site, parallel to pcs.
 	msgs [traceSize]string
 
-	// ---
-	// fields below are transient
-
-	// guards lazy initialisation of _summary and _trace; cleared whenever pcs or msgs are mutated.
-	_loaded  bool
+	// _summary and _trace are lazily computed and cached renderings.
+	// Both are invalidated (set to "") whenever a new propagation step is added.
 	_summary string
 	_trace   string
 }
@@ -137,48 +140,100 @@ func TraceAt[K ~int](flk K, err error, msg string, args ...any) error {
 	return rv
 }
 
+// Error returns a short summary of the most recent propagation step,
+// consisting of the step message and its file/line location.
+// The result is cached in _summary and backed by summaryCache.
 func (self *errTrace) Error() string {
 	self.mut.Lock()
 	defer self.mut.Unlock()
-	if !self._loaded {
-		self.loadInfo()
+
+	if "" != self._summary {
+		return self._summary
 	}
+	if self.next <= 0 {
+		return ""
+	}
+
+	// determine caching keys
+	var start int
+	if self.next > traceSize {
+		start = traceSize - 1
+	} else {
+		start = self.next - 1
+	}
+	k1 := self.pcs[start]
+	k2 := self.msgs[start]
+
+	smr, rs := summaryCache.Get(k1, k2)
+	switch rs {
+	case cchMiss:
+		self._summary = self.genSummary()
+	case cchMissCacheNew:
+		self._summary = self.genSummary()
+		summaryCache.Set(k1, k2, self._summary)
+	case cchHit:
+		self._summary = smr
+	}
+
 	return self._summary
 }
 
+// Trace returns the full formatted traceback for this error.
+// The result is cached in _trace and backed by traceCache.
+// Implements the Error interface; also reachable via %+v formatting.
+func (self *errTrace) Trace() string {
+	self.mut.Lock()
+	defer self.mut.Unlock()
+
+	if "" != self._trace {
+		return self._trace
+	}
+	if self.next <= 0 {
+		return ""
+	}
+
+	// determine caching keys
+	k1 := traceL1Key{turnCount: self.next, pcs: self.pcs}
+	k2 := traceL2Key{cause: self.causeString(), msgs: self.msgs}
+
+	trc, rs := traceCache.Get(k1, k2)
+	switch rs {
+	case cchMiss:
+		self._trace = self.genTrace()
+	case cchMissCacheNew:
+		self._trace = self.genTrace()
+		traceCache.Set(k1, k2, self._trace)
+	case cchHit:
+		self._trace = trc
+	}
+
+	return self._trace
+}
+
+// Cause returns the root error that initiated this trace.
 func (self *errTrace) Cause() error {
 	self.mut.Lock()
 	defer self.mut.Unlock()
 	return self.cause
 }
 
-func (self *errTrace) Trace() string {
-	self.mut.Lock()
-	defer self.mut.Unlock()
-	if !self._loaded {
-		self.loadInfo()
-	}
-	return self._trace
-}
-
+// Format implements fmt.Formatter. %+v emit Trace(), other verbs emits Error().
 func (self *errTrace) Format(f fmt.State, verb rune) {
-	self.mut.Lock()
-	defer self.mut.Unlock()
-	if !self._loaded {
-		self.loadInfo()
-	}
 	switch verb {
 	case 'v':
 		if f.Flag('+') {
-			io.WriteString(f, self._trace)
+			io.WriteString(f, self.Trace())
 		} else {
-			io.WriteString(f, self._summary)
+			io.WriteString(f, self.Error())
 		}
 	case 's':
-		io.WriteString(f, self._summary)
+		io.WriteString(f, self.Error())
 	}
 }
 
+// Unwrap returns the error chain for errors.Is and errors.As traversal.
+// If Classify has been called, the assigned sentinel is prepended so that
+// errors.Is matches it before falling through to cause.
 func (self *errTrace) Unwrap() []error {
 	self.mut.Lock()
 	defer self.mut.Unlock()
@@ -189,13 +244,16 @@ func (self *errTrace) Unwrap() []error {
 	return []error{self.cause}
 }
 
+// Classify assigns a sentinel to override this error's identity for
+// errors.Is matching. Does not affect cause or the recorded trace.
 func (self *errTrace) Classify(err SentinelError) {
 	self.mut.Lock()
 	defer self.mut.Unlock()
 	self.classify(err)
 }
 
-// causeString returns the Error() string of self.cause.
+// causeString returns the Error() string of cause, or "" if cause is nil.
+// Caller must hold mut.
 func (self *errTrace) causeString() string {
 	if nil != self.cause {
 		return self.cause.Error()
@@ -204,19 +262,44 @@ func (self *errTrace) causeString() string {
 	}
 }
 
+// classify sets the class field. Caller must hold mut.
 func (self *errTrace) classify(err SentinelError) {
 	self.class = err
 }
 
-// genInfo renders the summary and full trace strings for self into dst.
-// When next exceeds traceSize, middle entries are represented as an omission
-// count, preserving the first and most recent call sites in the output.
-func (self *errTrace) genInfo(dst *errInfo) {
-	cause := self.causeString()
+// genSummary renders the summary string from the most recent propagation step.
+// Caller must hold mut.
+func (self *errTrace) genSummary() string {
+	// short cut to cause string if self is empty
 	if 0 == self.next {
-		dst.summary = cause
-		dst.trace = cause
-		return
+		return self.causeString()
+	}
+
+	// determine index of current pc & msg
+	var start int
+	if self.next > traceSize {
+		start = traceSize - 1
+	} else {
+		start = self.next - 1
+	}
+	msg := self.msgs[start]
+
+	// retrieve file/line string
+	fls := getFileLines(self.pcs[start : 1+start])[0]
+
+	return msg + fls
+}
+
+// genTrace renders the full traceback string across all recorded steps.
+// When the trace has been compressed, an omission count is inserted at the
+// compression point.
+// Caller must hold mut.
+func (self *errTrace) genTrace() string {
+	cause := self.causeString()
+
+	// short cut to cause string if self is empty
+	if 0 == self.next {
+		return cause
 	}
 
 	start := self.next - 1
@@ -231,7 +314,7 @@ func (self *errTrace) genInfo(dst *errInfo) {
 
 	// render full error trace
 	// note that the trace is "compressed" if it has more than traceSize turns
-	var flstart, omitfmt string
+	var omitfmt string
 	var tb strings.Builder
 	tb.WriteString("Traceback [most recent call first]:\n")
 	fls := getFileLines(self.pcs[:1+start])
@@ -243,11 +326,6 @@ func (self *errTrace) genInfo(dst *errInfo) {
 
 		// write trace file/line
 		tb.WriteString(fls[i])
-
-		// save flstart which gives file/line for trace summary
-		if i == start {
-			flstart = fls[i]
-		}
 
 		// insert misscount if it is > 0
 		if i == misspos {
@@ -263,13 +341,8 @@ func (self *errTrace) genInfo(dst *errInfo) {
 		tb.WriteString("Caused by:\n  ")
 		tb.WriteString(cause)
 	}
-	dst.trace = tb.String()
 
-	// generate the summary
-	tb.Reset()
-	tb.WriteString(msgs[start])
-	tb.WriteString(flstart)
-	dst.summary = tb.String()
+	return tb.String()
 
 }
 
@@ -335,12 +408,11 @@ func init() {
 	}
 }
 
-// addCallerInfo appends a (PC, msg) pair to err's propagation trace.
-// When the trace is full, middle entries are compressed out, preserving
-// the first and most recent call sites. skip adjusts the call stack depth
-// passed to getPC so that the recorded PC points to the caller of Trace
-// or TraceAt, not to addCallerInfo itself.
-// Must be called with err.mut held when err was not freshly allocated.
+// addCallerInfo appends a (PC, msg) pair to err's propagation trace,
+// compressing out middle entries when traceSize is exceeded.
+// skip adjusts the runtime.Callers depth so the recorded PC points to the
+// caller of Trace or TraceAt. Must be called with err.mut held when err
+// was not freshly allocated.
 func addCallerInfo[K ~int](err *errTrace, flk K, msg string, skip int) {
 
 	// pc acquisition same as log/slog
@@ -361,7 +433,6 @@ func addCallerInfo[K ~int](err *errTrace, flk K, msg string, skip int) {
 	err.msgs[pos] = strings.TrimSpace(msg)
 
 	// clear cached summary & trace
-	err._loaded = false
 	err._summary = ""
 	err._trace = ""
 
@@ -371,6 +442,8 @@ func addCallerInfo[K ~int](err *errTrace, flk K, msg string, skip int) {
 // ---
 // program counter resolution caching
 
+// pcCache stores resolved program counters keyed by pckey, shared across
+// all TraceAt call sites.
 var pcCache sync.Map
 
 // pckey is the cache key for getPC.
@@ -414,131 +487,40 @@ func getPC[K ~int](ck pckey[K]) uintptr {
 }
 
 // ---
-// Work In Progress
-// errTrace _trace & _summary caching
-// allows saving allocations if Trace msg are constants
-// need to improve L2 cache for it not to drain resources when caching is not possible
+// Error() & Trace() caching
 
-var errCache sync.Map
+// tickInterval is the time window duration used by the package-level scClock,
+// controlling how quickly summaryCache and traceCache slot states evolve.
+const tickInterval = 16 * time.Second
 
-// errInfo holds the rendered string forms of an errTrace.
-// Both fields are derived entirely from errTrace content and are safe to cache.
-type errInfo struct {
-	summary string
-	trace   string
+// ticks is the shared clock driving summaryCache and traceCache.
+// summaryCache keys on (mostRecentPC, mostRecentMsg) and caches Error() output.
+// traceCache keys on (pcs+turnCount, cause+msgs) and caches Trace() output.
+var (
+	ticks        = &scClock{}
+	summaryCache = &timedCache[uintptr, string, string]{clock: ticks}
+	traceCache   = &timedCache[traceL1Key, traceL2Key, string]{clock: ticks}
+)
+
+func init() {
+	err := ticks.Init(tickInterval)
+	if nil != err {
+		panic(err)
+	}
 }
 
-// cacheKey is the outer key for errCache, derived from the PC trace alone.
-// Two errTrace values with identical pcs and turnCount took the same code path
-// and share a cacheSlot.
-type cacheKey struct {
+// traceL1Key is the stable outer key for traceCache, derived from the recorded
+// PCs and total turn count. Two errTrace values sharing this key took the same
+// code path and map to the same cacheSlot.
+type traceL1Key struct {
 	pcs       [traceSize]uintptr
 	turnCount int
 }
 
-// cacheL2Key is the inner key within a cacheSlot, derived from the cause
-// string and message array. It discriminates between errTrace values that
-// share a code path but differ in cause or messages.
-type cacheL2Key struct {
+// traceL2Key is the inner key within a traceCache cacheSlot, derived from the
+// cause string and message array. It discriminates errors that share a code path
+// but differ in cause or per-step messages.
+type traceL2Key struct {
 	cause string
 	msgs  [traceSize]string
-}
-
-// cacheSlot holds the L2 cache for a single code path (cacheKey).
-// Multiple (cause, msgs) combinations may map to distinct errInfo values
-// within the same slot.
-type cacheSlot struct {
-	mut   sync.RWMutex
-	infos map[cacheL2Key]errInfo
-	/*
-		TODO:
-		consider replacing infos map with ring buffer using below fields.
-		cache eviction is a snap in this case.
-		drawback is number of keys comparison.
-		if count > 1, caching unlikely to work hence maxCached can be reduced.
-
-		keys  [maxCached]cacheL2Key
-		infos [maxCached]errInfo
-		count int // number of valid entries, capped at maxCached
-		next  int // ring buffer insertion point
-	*/
-}
-
-// newCacheSlot allocates an empty cacheSlot.
-func newCacheSlot() *cacheSlot {
-	return &cacheSlot{infos: make(map[cacheL2Key]errInfo)}
-}
-
-// loadInfo computes and caches _summary and _trace for self.
-// It performs a two-level cache lookup: first by code path (pcs, next),
-// then by content (cause, msgs). On a miss at the second level it calls
-// genInfo to render the strings and stores the result.
-// Must be called with self.mut held.
-func (self *errTrace) loadInfo() {
-	var slot *cacheSlot
-	var ok bool
-	ck := cacheKey{turnCount: self.next, pcs: self.pcs}
-	val, found := errCache.Load(ck)
-	if found {
-		slot, ok = val.(*cacheSlot)
-		if !ok {
-			slot = nil
-			errCache.CompareAndDelete(ck, val) // val should not be in map
-		}
-	}
-	if nil == slot {
-		val, _ = errCache.LoadOrStore(ck, newCacheSlot())
-		slot = val.(*cacheSlot) // if val was again invalid this would indicate a big issue, better panic in this case...
-	}
-
-	// lock retrieved slot for reading
-	slot.mut.RLock()
-	readLocked := true
-	releaseRLock := func() {
-		if readLocked {
-			slot.mut.RUnlock()
-			readLocked = false
-		}
-	}
-	defer releaseRLock()
-
-	var loaded *errInfo
-	defer func() {
-		// update local cache
-		if nil != loaded {
-			self._loaded = true
-			self._summary = loaded.summary
-			self._trace = loaded.trace
-		}
-	}()
-
-	sk := cacheL2Key{cause: self.causeString(), msgs: self.msgs}
-	info, found := slot.infos[sk]
-	if found {
-		loaded = &info // saved by exit defer
-		return
-	}
-
-	// lock retrieved slot for writing
-	releaseRLock()
-	slot.mut.Lock()
-	defer slot.mut.Unlock()
-
-	// recheck the cache in case it was updated meanwhile locking
-	info, found = slot.infos[sk]
-	if found {
-		loaded = &info // saved by exit defer
-		return
-	}
-
-	self.genInfo(&info)
-	if len(slot.infos) > maxCached {
-		// TODO: improve this
-		slot.infos = make(map[cacheL2Key]errInfo, maxCached)
-	}
-	slot.infos[sk] = info
-
-	// exit defer save loaded in local cache
-	loaded = &info
-
 }
