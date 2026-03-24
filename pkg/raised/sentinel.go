@@ -47,6 +47,7 @@ func NewSentinel(msg string) SentinelError {
 // Should only be called at package initialisation time (var declarations).
 func NewSentinelError[T any](msg string) *Sentinel[T] {
 	var code int
+	msg = strings.TrimSpace(msg)
 	smt := codeRe.FindStringSubmatch(msg)
 	if 2 == len(smt) {
 		num := remUnderscore.Replace(smt[1])
