@@ -208,7 +208,11 @@ func (self *cacheSlot[K, V]) setStat(hit bool) {
 	}
 
 	ts := self.clock.T()
-	stat := self.stats[ts%timeWindowSize]
+	idx := ts % timeWindowSize
+	if idx < 0 {
+		idx += timeWindowSize
+	}
+	stat := self.stats[idx]
 	if ts != stat.t {
 		stat = cchStats{t: ts}
 	}
@@ -217,7 +221,7 @@ func (self *cacheSlot[K, V]) setStat(hit bool) {
 	} else {
 		stat.miss += 1
 	}
-	self.stats[ts%timeWindowSize] = stat
+	self.stats[idx] = stat
 }
 
 // setVal stores (ck, val) in the ring buffer. No-ops if the slot is
