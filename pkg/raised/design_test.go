@@ -3,11 +3,11 @@ package raised
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"unique"
-	"errors"
 )
 
 // ====================================================================================
@@ -483,7 +483,6 @@ type inerr struct {
 	err error
 }
 
-
 // ====================================================================================
 // string & array of strings comparison performance
 // interning overhead vs gain ?
@@ -747,7 +746,6 @@ func rndString(sz int) string {
 
 	return rawB64.EncodeToString(buf)
 }
-
 
 func TestDesign_RndString(t *testing.T) {
 	t.Logf("rndString(32) -> %s", rndString(32))
