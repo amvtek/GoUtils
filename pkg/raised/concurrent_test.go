@@ -59,7 +59,7 @@ func runContendTest(t *testing.T, chainFn func(int) error) {
 	var failures int
 	for r := range results {
 		n, g := r.n, r.n%contendGroupN
-		re, ok := r.err.(Error)
+		re, ok := r.err.(*ErrorTrace)
 		if !ok {
 			t.Errorf("n=%d: expected Error interface", n)
 			failures++
@@ -168,7 +168,7 @@ func buildContendExpectations(t *testing.T, chainFn func(int) error) [contendGro
 	t.Helper()
 	var exp [contendGroupN]contendExpectation
 	for g := range contendGroupN {
-		et, ok := chainFn(g).(*errTrace)
+		et, ok := chainFn(g).(*ErrorTrace)
 		if !ok {
 			t.Fatalf("group %d: expected *errTrace", g)
 		}

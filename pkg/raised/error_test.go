@@ -20,14 +20,14 @@ func TestError_NilPassthrough(t *testing.T) {
 func TestError_CreatesFromPlainError(t *testing.T) {
 	err := Trace(errTraceSentinel, "step one")
 
-	re, ok := err.(Error)
+	et, ok := err.(*ErrorTrace)
 	if !ok {
 		t.Fatal("expected err to implement Error interface")
 	}
-	if re.Cause() != errTraceSentinel {
-		t.Errorf("expected Cause() == errTraceSentinel, got %v", re.Cause())
+	if et.Cause() != errTraceSentinel {
+		t.Errorf("expected Cause() == errTraceSentinel, got %v", et.Cause())
 	}
-	if re.Error() == "" {
+	if et.Error() == "" {
 		t.Error("expected non-empty Error()")
 	}
 }
@@ -35,12 +35,12 @@ func TestError_CreatesFromPlainError(t *testing.T) {
 func TestError_ExtendsExistingTrace(t *testing.T) {
 	err := f03()
 
-	re, ok := err.(Error)
+	et, ok := err.(*ErrorTrace)
 	if !ok {
 		t.Fatal("expected err to implement Error interface")
 	}
 
-	trace := re.Trace()
+	trace := et.Trace()
 	if !strings.Contains(trace, "failed f01") {
 		t.Errorf("expected trace to contain %q, got:\n%s", "failed f01", trace)
 	}
@@ -58,18 +58,18 @@ func TestError_ExtendsExistingTrace(t *testing.T) {
 func TestError_FormatVerbs(t *testing.T) {
 	err := f03()
 
-	re, ok := err.(Error)
+	et, ok := err.(*ErrorTrace)
 	if !ok {
 		t.Fatal("expected err to implement Error interface")
 	}
 
-	if fmt.Sprintf("%s", err) != re.Error() {
+	if fmt.Sprintf("%s", err) != et.Error() {
 		t.Errorf("%%s output does not match Error()")
 	}
-	if fmt.Sprintf("%v", err) != re.Error() {
+	if fmt.Sprintf("%v", err) != et.Error() {
 		t.Errorf("%%v output does not match Error()")
 	}
-	if fmt.Sprintf("%+v", err) != re.Trace() {
+	if fmt.Sprintf("%+v", err) != et.Trace() {
 		t.Errorf("%%+v output does not match Trace()")
 	}
 }
@@ -77,11 +77,11 @@ func TestError_FormatVerbs(t *testing.T) {
 func TestError_Classify(t *testing.T) {
 	err := f03()
 
-	re, ok := err.(Error)
+	et, ok := err.(*ErrorTrace)
 	if !ok {
-		t.Fatal("expected err to implement Error interface")
+		t.Fatal("expected err to be an ErrorTrace")
 	}
-	re.Classify(errClassifySentinel)
+	et.Classify(errClassifySentinel)
 
 	if !errors.Is(err, errClassifySentinel) {
 		t.Error("expected errors.Is to match errClassifySentinel after Classify")
@@ -96,12 +96,12 @@ func TestError_Compression(t *testing.T) {
 	errFunc := makeRaisedPropChain(16, traceSize+4)
 	err := errFunc()
 
-	re, ok := err.(Error)
+	et, ok := err.(*ErrorTrace)
 	if !ok {
-		t.Fatal("expected err to implement Error interface")
+		t.Fatal("expected err to be an ErrorTrace")
 	}
 
-	trace := re.Trace()
+	trace := et.Trace()
 	if !strings.Contains(trace, "omission") {
 		t.Errorf("expected omission marker in compressed trace, got:\n%s", trace)
 	}
@@ -152,7 +152,7 @@ func TestError_ErrorsIs(t *testing.T) {
 	}
 }
 
-func traceStep(flk int, cause error, msg string) Error {
+func traceStep(flk int, cause error, msg string) *ErrorTrace {
 	err := TraceAt(flk, cause, msg)
-	return err.(Error)
+	return err.(*ErrorTrace)
 }
