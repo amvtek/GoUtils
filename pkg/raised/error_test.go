@@ -20,7 +20,7 @@ func TestError_NilPassthrough(t *testing.T) {
 func TestError_CreatesFromPlainError(t *testing.T) {
 	err := Trace(errTraceSentinel, "step one")
 
-	et, ok := err.(*ErrorTrace)
+	et, ok := err.(*errTrace)
 	if !ok {
 		t.Fatal("expected err to implement Error interface")
 	}
@@ -35,7 +35,7 @@ func TestError_CreatesFromPlainError(t *testing.T) {
 func TestError_ExtendsExistingTrace(t *testing.T) {
 	err := f03()
 
-	et, ok := err.(*ErrorTrace)
+	et, ok := err.(*errTrace)
 	if !ok {
 		t.Fatal("expected err to implement Error interface")
 	}
@@ -58,7 +58,7 @@ func TestError_ExtendsExistingTrace(t *testing.T) {
 func TestError_FormatVerbs(t *testing.T) {
 	err := f03()
 
-	et, ok := err.(*ErrorTrace)
+	et, ok := err.(*errTrace)
 	if !ok {
 		t.Fatal("expected err to implement Error interface")
 	}
@@ -77,9 +77,9 @@ func TestError_FormatVerbs(t *testing.T) {
 func TestError_Classify(t *testing.T) {
 	err := f03()
 
-	et, ok := err.(*ErrorTrace)
+	et, ok := err.(*errTrace)
 	if !ok {
-		t.Fatal("expected err to be an ErrorTrace")
+		t.Fatal("expected err to be an errTrace")
 	}
 	et.Classify(errClassifySentinel)
 
@@ -96,9 +96,9 @@ func TestError_Compression(t *testing.T) {
 	errFunc := makeRaisedPropChain(16, traceSize+4)
 	err := errFunc()
 
-	et, ok := err.(*ErrorTrace)
+	et, ok := err.(*errTrace)
 	if !ok {
-		t.Fatal("expected err to be an ErrorTrace")
+		t.Fatal("expected err to be an errTrace")
 	}
 
 	trace := et.Trace()
@@ -152,7 +152,7 @@ func TestError_ErrorsIs(t *testing.T) {
 	}
 }
 
-func traceStep(flk int, cause error, msg string) *ErrorTrace {
+func traceStep(flk int, cause error, msg string) *errTrace {
 	err := TraceAt(flk, cause, msg)
-	return err.(*ErrorTrace)
+	return err.(*errTrace)
 }

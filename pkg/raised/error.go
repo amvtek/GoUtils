@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Sizing constants for ErrorTrace.
+// Sizing constants for errTrace.
 // traceSize is the maximum number of (PC, message) pairs retained in a trace;
 // middle entries are compressed out beyond this limit.
 // filelineFmt and missFileline are the formatted file/line templates used
@@ -23,43 +23,80 @@ const (
 	missFileline = "\n  file: ? line: ?\n"
 )
 
-// Key is a hashcode derived from an Error's propagation path and terminal
-// error identities. Two Error values sharing the same Key are considered
-// to represent the same problem: identical code path and equivalent root cause.
-type Key = uint64
-
-
-// TODO: remove this block
 // Error extends the standard error interface with propagation tracing and
 // structural comparison. Instances are created exclusively via Trace.
-// type Error interface {
-// 	error
-//
-// 	// Cause returns the root error that initiated this trace,
-// 	// typically a SentinelError or a well-typed external error.
-// 	Cause() error
-//
-// 	// Trace returns a formatted traceback string listing each Trace call
-// 	// site in order from most recent to oldest, including file and line
-// 	// information. Use %+v with fmt to obtain the same output.
-// 	Trace() string
-//
-// 	// Classify overrides the sentinel identity of this error from the caller's
-// 	// perspective. Intended for packages that receive a foreign error and want
-// 	// to assert their own interpretation without changing the underlying cause.
-// 	//
-// 	// Example:
-// 	//
-// 	//	err = raised.Trace(err, "storage unavailable")
-// 	//	err.Classify(ErrServiceUnavailable)
-// 	Classify(SentinelError)
-// }
+type Error interface {
+	error
 
-// TODO: public declarations docstrings 
-// 1. they shall not refer to private implementation details such as private field names.
-// 2. they shall focus on what matters to a programmer using the package.
+	// Cause returns the root error that initiated this trace,
+	// typically a SentinelError or a well-typed external error.
+	Cause() error
 
-// ErrorTrace is an error used to track the propagation of a root error...
+	// Trace returns a formatted traceback string listing each Trace call
+	// site in order from most recent to oldest, including file and line
+	// information. Use %+v with fmt to obtain the same output.
+	Trace() string
+
+	// Classify overrides the sentinel identity of this error from the caller's
+	// perspective. Intended for packages that receive a foreign error and want
+	// to assert their own interpretation without changing the underlying cause.
+	//
+	// Example:
+	//
+	//	err = raised.Trace(err, "storage unavailable")
+	//	err.Classify(ErrServiceUnavailable)
+	Classify(SentinelError)
+}
+
+// Trace records a propagation step for err, attaching msg and the call site PC
+// to the trace. If err is already a traced error it is extended in place;
+// otherwise a new trace is created with err as its cause.
+// If args are provided, msg is used as a format string.
+// Returns nil if err is nil.
+func Trace(err error, msg string, args ...any) Error {
+	if nil == err {
+		return nil
+	}
+	if len(args) > 0 {
+		msg = fmt.Sprintf(msg, args...)
+	}
+	rv, ok := err.(*errTrace)
+	if !ok {
+		rv = &errTrace{cause: err}
+	} else {
+		// rv not created here, hence we lock
+		rv.mut.Lock()
+		defer rv.mut.Unlock()
+	}
+	addCallerInfo(rv, 0, msg, 1)
+	return rv
+}
+
+// TraceAt behaves like Trace but caches the call site PC using flk as a
+// lookup key, avoiding repeated runtime.Callers calls on hot paths.
+// flk must be a non-zero integer constant unique within the calling package.
+// If args are provided, msg is used as a format string.
+// Returns nil if err is nil.
+func TraceAt[K ~int](flk K, err error, msg string, args ...any) Error {
+	if nil == err {
+		return nil
+	}
+	if len(args) > 0 {
+		msg = fmt.Sprintf(msg, args...)
+	}
+	rv, ok := err.(*errTrace)
+	if !ok {
+		rv = &errTrace{cause: err}
+	} else {
+		// rv not created here, hence we lock
+		rv.mut.Lock()
+		defer rv.mut.Unlock()
+	}
+	addCallerInfo(rv, flk, msg, 1)
+	return rv
+}
+
+// errTrace is an error used to track the propagation of a root error...
 // It records the propagation path as a fixed-size sequence of (PC, message)
 // pairs; middle entries are compressed out when traceSize is exceeded,
 // preserving the first and most recent call sites.
@@ -70,8 +107,8 @@ type Key = uint64
 //
 // Concurrency: all fields are guarded by mut. Contention is expected to be
 // low since errors are typically written on one goroutine and read on another.
-type ErrorTrace struct {
-	// mut guards all fields. Contention is expected to be low but ErrorTrace
+type errTrace struct {
+	// mut guards all fields. Contention is expected to be low but errTrace
 	// may be transmitted over a channel between goroutines.
 	mut sync.Mutex
 
@@ -98,58 +135,10 @@ type ErrorTrace struct {
 	_trace   string
 }
 
-// Trace records a propagation step for err, attaching msg and the call site PC
-// to the trace. If err is already a traced error it is extended in place;
-// otherwise a new trace is created with err as its cause.
-// If args are provided, msg is used as a format string.
-// Returns nil if err is nil.
-func Trace(err error, msg string, args ...any) error {
-	if nil == err {
-		return nil
-	}
-	if len(args) > 0 {
-		msg = fmt.Sprintf(msg, args...)
-	}
-	rv, ok := err.(*ErrorTrace)
-	if !ok {
-		rv = &ErrorTrace{cause: err}
-	} else {
-		// rv not created here, hence we lock
-		rv.mut.Lock()
-		defer rv.mut.Unlock()
-	}
-	addCallerInfo(rv, 0, msg, 1)
-	return rv
-}
-
-// TraceAt behaves like Trace but caches the call site PC using flk as a
-// lookup key, avoiding repeated runtime.Callers calls on hot paths.
-// flk must be a non-zero integer constant unique within the calling package.
-// If args are provided, msg is used as a format string.
-// Returns nil if err is nil.
-func TraceAt[K ~int](flk K, err error, msg string, args ...any) error {
-	if nil == err {
-		return nil
-	}
-	if len(args) > 0 {
-		msg = fmt.Sprintf(msg, args...)
-	}
-	rv, ok := err.(*ErrorTrace)
-	if !ok {
-		rv = &ErrorTrace{cause: err}
-	} else {
-		// rv not created here, hence we lock
-		rv.mut.Lock()
-		defer rv.mut.Unlock()
-	}
-	addCallerInfo(rv, flk, msg, 1)
-	return rv
-}
-
 // Error returns a short summary of the most recent propagation step,
 // consisting of the step message and its file/line location.
 // The result is cached in _summary and backed by summaryCache.
-func (self *ErrorTrace) Error() string {
+func (self *errTrace) Error() string {
 	self.mut.Lock()
 	defer self.mut.Unlock()
 
@@ -187,7 +176,7 @@ func (self *ErrorTrace) Error() string {
 // Trace returns the full formatted traceback for this error.
 // The result is cached in _trace and backed by traceCache.
 // Implements the Error interface; also reachable via %+v formatting.
-func (self *ErrorTrace) Trace() string {
+func (self *errTrace) Trace() string {
 	self.mut.Lock()
 	defer self.mut.Unlock()
 
@@ -217,14 +206,14 @@ func (self *ErrorTrace) Trace() string {
 }
 
 // Cause returns the root error that initiated this trace.
-func (self *ErrorTrace) Cause() error {
+func (self *errTrace) Cause() error {
 	self.mut.Lock()
 	defer self.mut.Unlock()
 	return self.cause
 }
 
 // Format implements fmt.Formatter. %+v emit Trace(), other verbs emits Error().
-func (self *ErrorTrace) Format(f fmt.State, verb rune) {
+func (self *errTrace) Format(f fmt.State, verb rune) {
 	switch verb {
 	case 'v':
 		if f.Flag('+') {
@@ -240,7 +229,7 @@ func (self *ErrorTrace) Format(f fmt.State, verb rune) {
 // Unwrap returns the error chain for errors.Is and errors.As traversal.
 // If Classify has been called, the assigned sentinel is prepended so that
 // errors.Is matches it before falling through to cause.
-func (self *ErrorTrace) Unwrap() []error {
+func (self *errTrace) Unwrap() []error {
 	self.mut.Lock()
 	defer self.mut.Unlock()
 	if nil != self.class {
@@ -252,7 +241,7 @@ func (self *ErrorTrace) Unwrap() []error {
 
 // Classify assigns a sentinel to override this error's identity for
 // errors.Is matching. Does not affect cause or the recorded trace.
-func (self *ErrorTrace) Classify(err SentinelError) {
+func (self *errTrace) Classify(err SentinelError) {
 	self.mut.Lock()
 	defer self.mut.Unlock()
 	self.classify(err)
@@ -260,7 +249,7 @@ func (self *ErrorTrace) Classify(err SentinelError) {
 
 // causeString returns the Error() string of cause, or "" if cause is nil.
 // Caller must hold mut.
-func (self *ErrorTrace) causeString() string {
+func (self *errTrace) causeString() string {
 	if nil != self.cause {
 		return self.cause.Error()
 	} else {
@@ -269,13 +258,13 @@ func (self *ErrorTrace) causeString() string {
 }
 
 // classify sets the class field. Caller must hold mut.
-func (self *ErrorTrace) classify(err SentinelError) {
+func (self *errTrace) classify(err SentinelError) {
 	self.class = err
 }
 
 // genSummary renders the summary string from the most recent propagation step.
 // Caller must hold mut.
-func (self *ErrorTrace) genSummary() string {
+func (self *errTrace) genSummary() string {
 	// short cut to cause string if self is empty
 	if 0 == self.next {
 		return self.causeString()
@@ -300,7 +289,7 @@ func (self *ErrorTrace) genSummary() string {
 // When the trace has been compressed, an omission count is inserted at the
 // compression point.
 // Caller must hold mut.
-func (self *ErrorTrace) genTrace() string {
+func (self *errTrace) genTrace() string {
 	cause := self.causeString()
 
 	// short cut to cause string if self is empty
@@ -419,7 +408,7 @@ func init() {
 // skip adjusts the runtime.Callers depth so the recorded PC points to the
 // caller of Trace or TraceAt. Must be called with err.mut held when err
 // was not freshly allocated.
-func addCallerInfo[K ~int](err *ErrorTrace, flk K, msg string, skip int) {
+func addCallerInfo[K ~int](err *errTrace, flk K, msg string, skip int) {
 
 	// pc acquisition same as log/slog
 	// var pc uintptr
@@ -516,7 +505,7 @@ func init() {
 }
 
 // traceL1Key is the stable outer key for traceCache, derived from the recorded
-// PCs and total turn count. Two ErrorTrace values sharing this key took the same
+// PCs and total turn count. Two errTrace values sharing this key took the same
 // code path and map to the same cacheSlot.
 type traceL1Key struct {
 	pcs       [traceSize]uintptr
