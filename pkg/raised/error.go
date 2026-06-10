@@ -341,6 +341,48 @@ func (self *errTrace) genTrace() string {
 
 }
 
+// snapshot captures a consistent point-in-time view of the errTrace fields
+// needed for error keying. The snapshot is taken under mut, ensuring that
+// subsequent operations on the snapshot are race-free.
+func (self *errTrace) snapshot(dst *errTraceSnapshot) {
+	self.mut.Lock()
+	defer self.mut.Unlock()
+	dst.cause = self.cause
+	dst.class = self.class
+	dst.next = self.next
+	dst.pcs = self.pcs
+}
+
+// errTraceSnapshot is an immutable point-in-time view of an errTrace.
+type errTraceSnapshot struct {
+	cause error
+	class SentinelError
+	next  int
+	pcs   [traceSize]uintptr
+}
+
+// Error returns the Error() string of cause, or "" if cause is nil.
+func (self *errTraceSnapshot) Error() string {
+	if nil != self.cause {
+		return self.cause.Error()
+	}
+	return ""
+}
+
+// Unwrap returns the error chain for errors.As traversal.
+// If class is set it is prepended, mirroring errTrace.Unwrap behaviour.
+func (self *errTraceSnapshot) Unwrap() []error {
+	rv := make([]error, 0, 2)
+	if nil != self.class {
+		rv = append(rv, self.class)
+	}
+	if nil != self.cause {
+		rv = append(rv, self.cause)
+	}
+
+	return rv
+}
+
 // getFileLines resolves a slice of PCs to formatted file/line strings.
 func getFileLines(pcs []uintptr) []string {
 	if 0 == len(pcs) {
