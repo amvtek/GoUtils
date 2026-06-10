@@ -735,6 +735,117 @@ func BenchmarkDesign_CmpInternA8S512almost(b *testing.B) {
 }
 
 // ====================================================================================
+// Error comparison
+
+func BenchmarkDesign_ErrCmp1Distinct(b *testing.B) {
+	e0 := errors.New("test sentinel")
+	e1 := NewSentinel("test sentinel")
+
+	for b.Loop() {
+		if e0 == e1 {
+			panic("unreachable")
+		}
+	}
+}
+
+func BenchmarkDesign_ErrCmp1Equal(b *testing.B) {
+	e0 := errors.New("test sentinel")
+	e1 := e0
+
+	for b.Loop() {
+		if e0 != e1 {
+			panic("unreachable")
+		}
+	}
+}
+
+func BenchmarkDesign_ErrCmpA8Equal(b *testing.B) {
+
+	var ers0, ers1 [8]error
+	for i := range len(ers0) {
+		ers0[i] = NewSentinel(fmt.Sprintf("ERROR(%d): test...", i))
+	}
+	copy(ers1[:], ers0[:])
+	for b.Loop() {
+		if ers0 != ers1 {
+			panic("unreachable")
+		}
+	}
+}
+
+func BenchmarkDesign_ErrCmpA8distinct(b *testing.B) {
+
+	var ers0 [8]error
+	for i := range len(ers0) {
+		ers0[i] = NewSentinel(fmt.Sprintf("ERROR(%d): test...", i))
+	}
+	var ers1 [8]error
+	copy(ers1[:], ers0[:])
+	ers1[0] = errors.New("not ERROR(0)...")
+
+	for b.Loop() {
+		if ers0 == ers1 {
+			panic("unreachable")
+		}
+	}
+}
+
+func BenchmarkDesign_ErrCmpA8almost(b *testing.B) {
+
+	var ers0 [8]error
+	for i := range len(ers0) {
+		ers0[i] = NewSentinel(fmt.Sprintf("ERROR(%d): test...", i))
+	}
+	var ers1 [8]error
+	copy(ers1[:], ers0[:])
+	ers1[7] = errors.New("not ERROR(7)...")
+
+	for b.Loop() {
+		if ers0 == ers1 {
+			panic("unreachable")
+		}
+	}
+}
+
+func BenchmarkDesign_ErrStrCmpA8Equal(b *testing.B) {
+	var ers0, ers1 [8]errStr
+	for i := range 8 {
+		// fmt.Sprintf ensures each string is a different alloc...
+		ers0[i].typ = fmt.Sprintf("*raised.Sentinel[%d]", i)
+		ers1[i].typ = fmt.Sprintf("*raised.Sentinel[%d]", i)
+		ers0[i].err = fmt.Sprintf("ERROR(%d): long text should follow to force comparing character by character...", i)
+		ers1[i].err = fmt.Sprintf("ERROR(%d): long text should follow to force comparing character by character...", i)
+	}
+
+	for b.Loop() {
+		if ers0 != ers1 {
+			panic("unreachable")
+		}
+	}
+}
+
+func BenchmarkDesign_ErrStrCmpA8FirstEqual(b *testing.B) {
+	var ers0, ers1 [8]errStr
+	// fmt.Sprintf ensures each string is a different alloc...
+	ers0[0].typ = fmt.Sprintf("*raised.Sentinel[%d]", 0)
+	ers1[0].typ = fmt.Sprintf("*raised.Sentinel[%d]", 0)
+	ers0[0].err = fmt.Sprintf("ERROR(%d): long text should follow to force comparing character by character...", 0)
+	ers1[0].err = fmt.Sprintf("ERROR(%d): long text should follow to force comparing character by character...", 0)
+
+	for b.Loop() {
+		if ers0 != ers1 {
+			panic("unreachable")
+		}
+	}
+}
+
+// errStr allows comparing error string values
+type errStr struct {
+	typ string
+	err string
+}
+
+// ====================================================================================
 // Utilities
 
 var rawB64 = base64.StdEncoding.WithPadding(base64.NoPadding)
