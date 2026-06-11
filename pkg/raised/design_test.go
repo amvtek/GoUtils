@@ -96,21 +96,21 @@ func BenchmarkDesign_propRaisedPCCaches64r4(b *testing.B) {
 func BenchmarkDesign_propErrorfTraces64r4(b *testing.B) {
 	ef := makeErrorfPropChain(64, 4)
 	for b.Loop() {
-		_ = fmt.Sprintf("%+v", ef())
+		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
 	}
 }
 
 func BenchmarkDesign_propRaisedTraces64r4(b *testing.B) {
 	ef := makeRaisedPropChain(64, 4)
 	for b.Loop() {
-		_ = fmt.Sprintf("%+v", ef())
+		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
 	}
 }
 
 func BenchmarkDesign_propRaisedPCCacheTraces64r4(b *testing.B) {
 	ef := makeRaisedPCCachePropChain(64, 4)
 	for b.Loop() {
-		_ = fmt.Sprintf("%+v", ef())
+		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
 	}
 }
 
@@ -138,21 +138,21 @@ func BenchmarkDesign_propRaisedPCCaches64r8(b *testing.B) {
 func BenchmarkDesign_propErrorfTraces64r8(b *testing.B) {
 	ef := makeErrorfPropChain(64, 8)
 	for b.Loop() {
-		_ = fmt.Sprintf("%+v", ef())
+		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
 	}
 }
 
 func BenchmarkDesign_propRaisedTraces64r8(b *testing.B) {
 	ef := makeRaisedPropChain(64, 8)
 	for b.Loop() {
-		_ = fmt.Sprintf("%+v", ef())
+		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
 	}
 }
 
 func BenchmarkDesign_propRaisedPCCacheTraces64r8(b *testing.B) {
 	ef := makeRaisedPCCachePropChain(64, 8)
 	for b.Loop() {
-		_ = fmt.Sprintf("%+v", ef())
+		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
 	}
 }
 
@@ -180,21 +180,21 @@ func BenchmarkDesign_propRaisedPCCaches256r16(b *testing.B) {
 func BenchmarkDesign_propErrorfTraces256r16(b *testing.B) {
 	ef := makeErrorfPropChain(256, 16)
 	for b.Loop() {
-		_ = fmt.Sprintf("%+v", ef())
+		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
 	}
 }
 
 func BenchmarkDesign_propRaisedTraces256r16(b *testing.B) {
 	ef := makeRaisedPropChain(256, 16)
 	for b.Loop() {
-		_ = fmt.Sprintf("%+v", ef())
+		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
 	}
 }
 
 func BenchmarkDesign_propRaisedPCCacheTraces256r16(b *testing.B) {
 	ef := makeRaisedPCCachePropChain(256, 16)
 	for b.Loop() {
-		_ = fmt.Sprintf("%+v", ef())
+		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
 	}
 }
 
