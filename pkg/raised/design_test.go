@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"unique"
+
+	rce "github.com/pkg/errors" // imported to allow comparing with raised...
 )
 
 // ====================================================================================
@@ -79,6 +81,13 @@ func BenchmarkDesign_propErrorfs64r4(b *testing.B) {
 	}
 }
 
+func BenchmarkDesign_propRces64r4(b *testing.B) {
+	ef := makeRcePropChain(64, 4)
+	for b.Loop() {
+		_ = ef()
+	}
+}
+
 func BenchmarkDesign_propRaiseds64r4(b *testing.B) {
 	ef := makeRaisedPropChain(64, 4)
 	for b.Loop() {
@@ -100,6 +109,13 @@ func BenchmarkDesign_propErrorfTraces64r4(b *testing.B) {
 	}
 }
 
+func BenchmarkDesign_propRceTraces64r4(b *testing.B) {
+	ef := makeRcePropChain(64, 4)
+	for b.Loop() {
+		_ = fmt.Sprintf("%+v", ef())
+	}
+}
+
 func BenchmarkDesign_propRaisedTraces64r4(b *testing.B) {
 	ef := makeRaisedPropChain(64, 4)
 	for b.Loop() {
@@ -116,6 +132,13 @@ func BenchmarkDesign_propRaisedPCCacheTraces64r4(b *testing.B) {
 
 func BenchmarkDesign_propErrorfs64r8(b *testing.B) {
 	ef := makeErrorfPropChain(64, 8)
+	for b.Loop() {
+		_ = ef()
+	}
+}
+
+func BenchmarkDesign_propRces64r8(b *testing.B) {
+	ef := makeRcePropChain(64, 8)
 	for b.Loop() {
 		_ = ef()
 	}
@@ -142,6 +165,13 @@ func BenchmarkDesign_propErrorfTraces64r8(b *testing.B) {
 	}
 }
 
+func BenchmarkDesign_propRceTraces64r8(b *testing.B) {
+	ef := makeRcePropChain(64, 8)
+	for b.Loop() {
+		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
+	}
+}
+
 func BenchmarkDesign_propRaisedTraces64r8(b *testing.B) {
 	ef := makeRaisedPropChain(64, 8)
 	for b.Loop() {
@@ -163,6 +193,13 @@ func BenchmarkDesign_propErrorfs256r16(b *testing.B) {
 	}
 }
 
+func BenchmarkDesign_propRces256r16(b *testing.B) {
+	ef := makeRcePropChain(256, 16)
+	for b.Loop() {
+		_ = ef()
+	}
+}
+
 func BenchmarkDesign_propRaiseds256r16(b *testing.B) {
 	ef := makeRaisedPropChain(256, 16)
 	for b.Loop() {
@@ -179,6 +216,13 @@ func BenchmarkDesign_propRaisedPCCaches256r16(b *testing.B) {
 
 func BenchmarkDesign_propErrorfTraces256r16(b *testing.B) {
 	ef := makeErrorfPropChain(256, 16)
+	for b.Loop() {
+		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
+	}
+}
+
+func BenchmarkDesign_propRceTraces256r16(b *testing.B) {
+	ef := makeRcePropChain(256, 16)
 	for b.Loop() {
 		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
 	}
@@ -225,6 +269,44 @@ func makeErrorfPropChain(strsz int, chnsz int) errfunc {
 		default:
 			return func() error {
 				return fmt.Errorf(wfmt, prev())
+			}
+		}
+	}
+
+	erf := func() error {
+		return errPropSentinel
+	}
+	for i := range chnsz {
+		erf = makeNextFunc(i, erf)
+	}
+
+	return erf
+}
+
+// makeRcePropChain constructs the error propagation chain using well known github.com/pkg/errors Wrap
+func makeRcePropChain(strsz int, chnsz int) errfunc {
+	makeNextFunc := func(fls int, prev errfunc) errfunc {
+		msg := fmt.Sprintf("[%d]: %s", fls, rndString(strsz))
+		switch fls % 4 {
+		case 0:
+			return func() error {
+				return rce.Wrap(prev(), msg)
+			}
+		case 1:
+			return func() error {
+				return rce.Wrap(prev(), msg)
+			}
+		case 2:
+			return func() error {
+				return rce.Wrap(prev(), msg)
+			}
+		case 3:
+			return func() error {
+				return rce.Wrap(prev(), msg)
+			}
+		default:
+			return func() error {
+				return rce.Wrap(prev(), msg)
 			}
 		}
 	}
