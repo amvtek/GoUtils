@@ -22,6 +22,9 @@ type SentinelError interface {
 	// via the ERROR(n) prefix, or 0 if no such prefix was present.
 	Code() int
 
+	// Fingerprint returns a representation of the error suitable for hashing.
+	Fingerprint() string
+
 	isSentinel() // unexported, prevent external implementation
 }
 
@@ -30,15 +33,16 @@ type SentinelError interface {
 // a distinct sentinel family, preventing accidental cross-package errors.Is
 // matches between sentinels that share the same message and code.
 type Sentinel[T any] struct {
-	code int
-	msg  string
+	code  int
+	msg   string
+	clamp int
 }
 
 // NewSentinel creates a SentinelError using the default phantom type.
 // Prefer NewSentinelError when the calling package wants a distinct sentinel family.
 // Should only be called at package initialisation time (var declarations).
 func NewSentinel(msg string) SentinelError {
-	return NewSentinelError[t](msg)
+	return NewSentinelError[pkg](msg)
 }
 
 // NewSentinelError creates a *Sentinel[T] for package-level error declaration.
@@ -54,20 +58,30 @@ func NewSentinelError[T any](msg string) *Sentinel[T] {
 		code, _ = strconv.Atoi(num)
 		msg = codeRe.ReplaceAllString(msg, fmt.Sprintf("ERROR(%s)", num))
 	}
-	return &Sentinel[T]{code: code, msg: msg}
+	rv := Sentinel[T]{code: code, clamp: len(msg)}
+	rv.msg = fmt.Sprintf("%s::%T", msg, rv) // append sentinel type to error msg
+	return &rv
 }
 
 func (self *Sentinel[T]) Error() string {
-	return self.msg
+	if (self.clamp > 0) && (self.clamp < len(self.msg)) {
+		return self.msg[0:self.clamp]
+	} else {
+		return self.msg
+	}
 }
 
 func (self *Sentinel[T]) Code() int {
 	return self.code
 }
 
+func (self *Sentinel[T]) Fingerprint() string {
+	return self.msg
+}
+
 func (self *Sentinel[T]) isSentinel() {}
 
 // phantom type used to instantiate default Sentinel
-type t struct{}
+type pkg struct{}
 
-var _ SentinelError = &Sentinel[t]{}
+var _ SentinelError = &Sentinel[pkg]{}
