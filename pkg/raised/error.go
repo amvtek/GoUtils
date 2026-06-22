@@ -389,6 +389,26 @@ func (self *errTraceSnapshot) Unwrap() []error {
 	return rv
 }
 
+// entryPoint returns the program counter of the module entry point for this trace.
+// If epc was recorded, it is returned directly as it represents the first module-local
+// call site encountered during error propagation, which is the most efficient location
+// for a Classify call to stabilize the error Key.
+// If epc is zero, falls back to the most recent PC in the trace as a best-effort approximation.
+func (self *errTraceSnapshot) entryPoint() uintptr {
+	if 0 != self.epc {
+		return self.epc
+	}
+
+	// use most recent pc as entry point
+	// we may do better iterating pcs in reverse order, looking at pc package until it is different than pcs[c]...
+	c := min(self.next, traceSize) - 1
+	if c >= 0 {
+		return self.pcs[c]
+	} else {
+		return 0
+	}
+}
+
 // getFileLines resolves a slice of PCs to formatted file/line strings.
 func getFileLines(pcs []uintptr) []string {
 	if 0 == len(pcs) {
@@ -567,7 +587,10 @@ func init() {
 	}
 }
 
-type l1Key = [2 + traceSize]uintptr
+// L1Key is a stable identifier for an error's propagation path, derived from
+// the module entry point, the recorded propagation PCs, and the total Trace
+// call count.
+type L1Key = [2 + traceSize]uintptr
 
 // traceL1Key is the stable outer key for traceCache, derived from the recorded
 // PCs and total turn count. Two errTrace values sharing this key took the same
