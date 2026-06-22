@@ -8,6 +8,7 @@ import (
 	"slices"
 )
 
+// keySize is the number of bytes in an ErrorKey.
 const keySize = 16
 
 // ErrorKey is a fixed-size hash derived from an error's propagation path and
@@ -19,35 +20,77 @@ type ErrorKey = [keySize]byte
 // The hash must produce at least keySize bytes.
 type HashFunc = func() hash.Hash
 
-// Keyer computes a stable ErrorKey for a raised Error.
-type Keyer interface {
-	// Key returns a stable ErrorKey for err and true if err is a raised Error
-	// with a resolvable terminal cause. Returns a zero ErrorKey and false
-	// if err is not a raised Error or has no resolvable terminal cause.
+// ErrorKeyer computes a stable ErrorKey for a raised Error.
+// The key is derived from the error's propagation path and terminal root cause,
+// independently of any dynamic context embedded in error messages.
+// Key returns true only when a key could be determined.
+type ErrorKeyer interface {
+	// Key returns an ErrorKey and a bool indicating if the key could be determined.
 	Key(error) (ErrorKey, bool)
+
+	isErrorKeyer() bool
 }
 
-// NewKeyer returns a Keyer using SHA256 as the default hash function,
+// NewErrorKeyer returns an ErrorKeyer using SHA256 as the default hash function,
 // scoped to the sentinel family identified by the phantom type T.
-func NewKeyer[T any]() (Keyer, error) {
+func NewErrorKeyer[T any](ukl UnstableKeyListener) (ErrorKeyer, error) {
 	// sha256 should provide better collision resistance than fnv128
-	return NewSentinelKeyer[T](sha256.New)
+	return NewSentinelErrorKeyer[T](sha256.New, ukl)
 }
 
-// sentinelKeyer is the Keyer implementation scoped to sentinel family T.
-type sentinelKeyer[T any] struct {
+// UnstableKeyEvent is delivered to an UnstableKeyListener when the ErrorKey
+// for a given code path could not be stably determined, indicating that the
+// terminal cause varies across calls originating from the same location.
+// This typically occurs when a foreign error embeds transient state — such as
+// a request ID or a dynamic value — in its message, preventing key stabilisation.
+//
+// The most efficient fix is to call Classify on the propagating Error at the
+// EntryPoint location, asserting a stable sentinel identity that overrides the
+// unstable foreign cause.
+type UnstableKeyEvent struct {
+	// Error is the full raised Error for which a stable key could not be determined.
+	Error Error
+
+	// K1 is the stable propagation path key for Error.
+	// K1 remains constant for a given code path and can be used by the listener to
+	// track instability frequency per origin site.
+	K1 L1Key
+
+	// Key is the ErrorKey that was derived for Error on this call.
+	// It may differ across calls originating from the same code path.
+	Key ErrorKey
+
+	// EntryPoint is the program counter of the module entry site for Error.
+	// This is the recommended location at which to call Classify in order to
+	// assert a stable sentinel identity and resolve the instability.
+	EntryPoint uintptr
+}
+
+// UnstableKeyListener is implemented by types that wish to observe key instability.
+type UnstableKeyListener interface {
+	// OnUnstableKey is called each time an ErrorKey fluctuates for a given
+	// code path, with the associated event.
+	OnUnstableKey(UnstableKeyEvent)
+}
+
+// sentinelErrorKeyer is the ErrorKeyer implementation scoped to sentinel family T.
+// It is immutable after construction.
+type sentinelErrorKeyer[T any] struct {
 	// hf is the hash factory used to compute ErrorKeys.
 	hf HashFunc
 
 	// tc caches computed ErrorKeys keyed by code path and terminal cause string,
 	// amortizing the cost of hash computation and file/line resolution on hot paths.
 	tc *keyCache
+
+	// ukl is the optional listener notified on each cache miss. May be nil.
+	ukl UnstableKeyListener
 }
 
-// NewSentinelKeyer returns a Keyer scoped to the sentinel family identified
+// NewSentinelErrorKeyer returns a ErrorKeyer scoped to the sentinel family identified
 // by the phantom type T, using hf as the hash function.
 // Returns ErrInvalidHash if hf is nil or produces fewer than keySize bytes.
-func NewSentinelKeyer[T any](hf HashFunc) (Keyer, error) {
+func NewSentinelErrorKeyer[T any](hf HashFunc, ukl UnstableKeyListener) (ErrorKeyer, error) {
 	// validate hf
 	if nil == hf {
 		return nil, Trace(ErrInvalidHash, "nil hash function")
@@ -57,17 +100,17 @@ func NewSentinelKeyer[T any](hf HashFunc) (Keyer, error) {
 		return nil, Trace(ErrInvalidHash, "insufficient hash size %d < %d", h.Size(), keySize)
 	}
 
-	sk := sentinelKeyer[T]{hf: hf, tc: &keyCache{clock: ticks}}
+	sk := sentinelErrorKeyer[T]{hf: hf, tc: &keyCache{clock: ticks}, ukl: ukl}
 
 	return &sk, nil
 }
 
 // Key computes a stable ErrorKey for err. err must be a raised Error produced
-// by Trace or TraceAt. The key is derived from the error's propagation path
+// by Trace. The key is derived from the error's propagation path
 // (as file/line strings) and the terminal cause resolved via UnwrapTerminal[T].
 // Results are cached by code path and terminal cause string.
 // Returns false if err is not a raised Error or has no resolvable terminal cause.
-func (self *sentinelKeyer[T]) Key(err error) (ErrorKey, bool) {
+func (self *sentinelErrorKeyer[T]) Key(err error) (ErrorKey, bool) {
 	erk := ErrorKey{}
 
 	// abort if err is not an *errTrace
@@ -87,7 +130,7 @@ func (self *sentinelKeyer[T]) Key(err error) (ErrorKey, bool) {
 
 	// determine caching keys
 
-	k1 := l1Key{}
+	k1 := L1Key{}
 	k1[0] = snp.epc
 	copy(k1[1:(1+traceSize)], snp.pcs[:])
 	k1[1+traceSize] = uintptr(snp.next) // not a valid PC, used to simplify k1
@@ -157,14 +200,22 @@ func (self *sentinelKeyer[T]) Key(err error) (ErrorKey, bool) {
 		self.tc.Set(k1, k2, erk)
 	}
 
-	// TODO: dispatch the MissCache event...
+	// dispatch new KeyMissEvent...
+	if nil != self.ukl {
+		evt := UnstableKeyEvent{Error: ert, K1: k1, Key: erk, EntryPoint: snp.entryPoint()}
+		self.ukl.OnUnstableKey(evt)
+	}
 
 	return erk, true
 
 }
 
+func (self *sentinelErrorKeyer[T]) isErrorKeyer() bool {
+	return true
+}
+
 // keyCache is a timedCache mapping (code path, terminal cause string) to ErrorKey.
-type keyCache = timedCache[l1Key, string, ErrorKey]
+type keyCache = timedCache[L1Key, string, ErrorKey]
 
 // UnwrapTerminal returns "minimal" error obtained by recursively unwrapping err or
 // casting err to Sentinel[T], SentinelError...
