@@ -86,10 +86,21 @@ func (self *sentinelKeyer[T]) Key(err error) (ErrorKey, bool) {
 	}
 
 	// determine caching keys
-	k1 := traceL1Key{turnCount: snp.next, pcs: snp.pcs}
-	cause := trm.Error() // less noisy than ert.cause which can be any error...
 
-	erk, rs := self.tc.Get(k1, cause)
+	k1 := l1Key{}
+	k1[0] = snp.epc
+	copy(k1[1:(1+traceSize)], snp.pcs[:])
+	k1[1+traceSize] = uintptr(snp.next) // not a valid PC, used to simplify k1
+
+	k2 := ""
+	stn, ok := trm.(SentinelError)
+	if ok {
+		k2 = stn.Fingerprint()
+	} else {
+		k2 = trm.Error() // less noisy than ert.cause which can be any error...
+	}
+
+	erk, rs := self.tc.Get(k1, k2)
 	if cchHit == rs {
 		return erk, true
 	}
@@ -102,9 +113,9 @@ func (self *sentinelKeyer[T]) Key(err error) (ErrorKey, bool) {
 	// ---
 	// cause component
 	hs.Write([]byte("CS"))
-	binary.BigEndian.PutUint64(ib[:], uint64(len(cause)))
+	binary.BigEndian.PutUint64(ib[:], uint64(len(k2)))
 	hs.Write(ib[:])
-	hs.Write([]byte(cause))
+	hs.Write([]byte(k2))
 
 	// ---
 	// next component
@@ -123,12 +134,14 @@ func (self *sentinelKeyer[T]) Key(err error) (ErrorKey, bool) {
 	case flc > traceSize:
 		flc = traceSize
 	}
+	flc += 1 // pc are read from k1 which is [epc|pcs...|next]
 	hs.Write([]byte("FLC"))
 	binary.BigEndian.PutUint64(ib[:], uint64(flc))
 	hs.Write(ib[:])
 
 	// hash each fileline in ert code path
-	fls := getFileLines(snp.pcs[:flc])
+	// flc allows excluding next which is not a valid pc
+	fls := getFileLines(k1[:flc])
 	for _, fln := range fls {
 		hs.Write([]byte("FLN"))
 		binary.BigEndian.PutUint64(ib[:], uint64(len(fln)))
@@ -141,15 +154,17 @@ func (self *sentinelKeyer[T]) Key(err error) (ErrorKey, bool) {
 	copy(erk[:], hs.Sum(nil))
 
 	if rs == cchMissCacheNew {
-		self.tc.Set(k1, cause, erk)
+		self.tc.Set(k1, k2, erk)
 	}
+
+	// TODO: dispatch the MissCache event...
 
 	return erk, true
 
 }
 
 // keyCache is a timedCache mapping (code path, terminal cause string) to ErrorKey.
-type keyCache = timedCache[traceL1Key, string, ErrorKey]
+type keyCache = timedCache[l1Key, string, ErrorKey]
 
 // UnwrapTerminal returns "minimal" error obtained by recursively unwrapping err or
 // casting err to Sentinel[T], SentinelError...
