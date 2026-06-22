@@ -123,6 +123,10 @@ type errTrace struct {
 	// total Trace call count including compressed-out entries.
 	next int
 
+	// epc (entry PC) holds the first program counter that is module local.
+	// due to trace compression epc may not be present in pcs.
+	epc uintptr
+
 	// pcs holds the program counter for each recorded Trace call site.
 	pcs [traceSize]uintptr
 
@@ -350,6 +354,7 @@ func (self *errTrace) snapshot(dst *errTraceSnapshot) {
 	dst.cause = self.cause
 	dst.class = self.class
 	dst.next = self.next
+	dst.epc = self.epc
 	dst.pcs = self.pcs
 }
 
@@ -358,6 +363,7 @@ type errTraceSnapshot struct {
 	cause error
 	class SentinelError
 	next  int
+	epc   uintptr
 	pcs   [traceSize]uintptr
 }
 
@@ -441,7 +447,7 @@ var buildModPath string
 
 func init() {
 	if info, ok := debug.ReadBuildInfo(); ok {
-		buildModPath = info.Main.Path + "/"
+		buildModPath = info.Main.Path + "/" // if info.Main.Path is "", buildModPath is not a valid pkgpath prefix.
 	}
 }
 
@@ -469,11 +475,26 @@ func addCallerInfo[K ~int](err *errTrace, flk K, msg string, skip int) {
 	err.pcs[pos] = pc
 	err.msgs[pos] = strings.TrimSpace(msg)
 
+	// record module "entry point"
+	if err.epc == 0 && isLocal(pc) {
+		err.epc = pc
+	}
+
 	// clear cached summary & trace
 	err._summary = ""
 	err._trace = ""
 
 	err.next += 1
+}
+
+// isLocal returns true if pc is a program counter within "project" module.
+// TODO: we need an heuristic in case module is undefined.
+func isLocal(pc uintptr) bool {
+	// FuncForPC does not alloc where as CallersFrames do
+	if fn := runtime.FuncForPC(pc - 1); fn != nil && pc > 0 {
+		return strings.HasPrefix(fn.Name(), buildModPath)
+	}
+	return false
 }
 
 // ---
@@ -545,6 +566,8 @@ func init() {
 		panic(err)
 	}
 }
+
+type l1Key = [2 + traceSize]uintptr
 
 // traceL1Key is the stable outer key for traceCache, derived from the recorded
 // PCs and total turn count. Two errTrace values sharing this key took the same
