@@ -235,7 +235,7 @@ func (self *cacheSlot[K, V]) setVal(ck K, val V) {
 		return
 	}
 
-	for i := range self.next % maxCached {
+	for i := range min(self.next, maxCached) {
 		if ck == self.keys[i] {
 			self.vals[i] = val
 			return
