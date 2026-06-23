@@ -73,6 +73,15 @@ type UnstableKeyListener interface {
 	OnUnstableKey(UnstableKeyEvent)
 }
 
+// UnstableKeyListenerFunc is an adapter type to allow the use of ordinary
+// functions as UnstableKeyListener.
+type UnstableKeyListenerFunc func(UnstableKeyEvent)
+
+// OnUnstableKey calls self.
+func (self UnstableKeyListenerFunc) OnUnstableKey(evt UnstableKeyEvent) {
+	self(evt)
+}
+
 // sentinelErrorKeyer is the ErrorKeyer implementation scoped to sentinel family T.
 // It is immutable after construction.
 type sentinelErrorKeyer[T any] struct {
