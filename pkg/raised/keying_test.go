@@ -93,6 +93,57 @@ func TestKeying_Key_NoResolvableTerminal(t *testing.T) {
 	t.Skip("nil-terminal path requires internal construction; covered by TestKey_NonTracedError and TestKey_NilError")
 }
 
+// ---- Key: correctness tests using RaisedPropChain ----
+
+func TestKeying_KeyPropChain_SamePropChainSameCauseSentinel_Equal(t *testing.T) {
+	ek := mustKeyer(t, nil)
+	s1 := NewSentinelError[familyA]("ERROR(110): sentinel can be recognized")
+
+	// ef1 propagates sentinel
+	ef1 := makeRaisedPropChain(64, 25, s1)
+	k1, ok1 := ek.Key(ef1())
+
+	// ef2 propagates an error that wraps s1
+	err2 := fmt.Errorf("I should be ignored %w", s1)
+	ef2 := makeRaisedPropChain(64, 25, err2)
+	k2, ok2 := ek.Key(ef2())
+
+	if !ok1 || !ok2 {
+		t.Fatalf("Key returned false: ok1=%v ok2=%v", ok1, ok2)
+	}
+
+	// RMQ: note that the error propagated by ef2 is different than the one propagated by ef1
+	// but they have same sentinel, hence keys are the same.
+	if k1 != k2 {
+		t.Errorf("expected same keys, got %X != %X", k1, k2)
+	}
+}
+
+func TestKeying_KeyPropChain_SamePropChainDistinctCauseSentinel_NotEqual(t *testing.T) {
+	ek := mustKeyer(t, nil)
+	s1 := NewSentinelError[familyA]("ERROR(110): distinct phantom types, distinct sentinels")
+	s2 := NewSentinelError[familyB]("ERROR(110): distinct phantom types, distinct sentinels")
+
+	// ef1 propagates sentinel s1
+	ef1 := makeRaisedPropChain(64, 25, s1)
+	k1, ok1 := ek.Key(ef1())
+
+	// ef2 propagates sentinel s2
+	ef2 := makeRaisedPropChain(64, 25, s2)
+	k2, ok2 := ek.Key(ef2())
+
+	if !ok1 || !ok2 {
+		t.Fatalf("Key returned false: ok1=%v ok2=%v", ok1, ok2)
+	}
+
+	if k1 == k2 {
+		t.Error("expected distinct keys")
+	}
+
+	t.Logf("k1 -> %X", k1[:])
+	t.Logf("k2 -> %X", k2[:])
+}
+
 // ---- Key: correctness tests ----
 
 func TestKeying_Key_SameCallSiteSameCause_Equal(t *testing.T) {
