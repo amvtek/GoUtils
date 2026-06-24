@@ -305,7 +305,7 @@ func BenchmarkDesign_keyRaised_Unstables64r4(b *testing.B) {
 
 	c := 0
 	for b.Loop() {
-		ek.Key(erts[c % 4096])
+		ek.Key(erts[c%4096])
 		c++
 	}
 }
@@ -326,7 +326,7 @@ func BenchmarkDesign_keyRaised_Unstables64r8(b *testing.B) {
 
 	c := 0
 	for b.Loop() {
-		ek.Key(erts[c % 4096])
+		ek.Key(erts[c%4096])
 		c++
 	}
 }
@@ -347,7 +347,7 @@ func BenchmarkDesign_keyRaised_Unstables64r16(b *testing.B) {
 
 	c := 0
 	for b.Loop() {
-		ek.Key(erts[c % 4096])
+		ek.Key(erts[c%4096])
 		c++
 	}
 }
