@@ -240,9 +240,123 @@ func BenchmarkDesign_propRaisedPCCacheTraces256r16(b *testing.B) {
 	}
 }
 
+// ====================================================================================
+// Keying errors returned by raised.Trace
+//
+// To run those benchmarks use:
+// go test ./pkg/raised -bench Design_key -benchmem
+//
+
+func BenchmarkDesign_keyRaised_Stables64r4(b *testing.B) {
+
+	ek, fail := NewErrorKeyer[pkg](nil)
+	if nil != fail {
+		b.Fatalf("failed instantiating ErrorKeyer, got error %v", fail)
+	}
+
+	ef := makeRaisedPropChain(64, 4, errPropSentinel)
+	err := ef()
+	for b.Loop() {
+		ek.Key(err)
+	}
+}
+
+func BenchmarkDesign_keyRaised_Stables64r8(b *testing.B) {
+
+	ek, fail := NewErrorKeyer[pkg](nil)
+	if nil != fail {
+		b.Fatalf("failed instantiating ErrorKeyer, got error %v", fail)
+	}
+
+	ef := makeRaisedPropChain(64, 8, errPropSentinel)
+	err := ef()
+	for b.Loop() {
+		ek.Key(err)
+	}
+}
+
+func BenchmarkDesign_keyRaised_Stables64r16(b *testing.B) {
+
+	ek, fail := NewErrorKeyer[pkg](nil)
+	if nil != fail {
+		b.Fatalf("failed instantiating ErrorKeyer, got error %v", fail)
+	}
+
+	ef := makeRaisedPropChain(64, 16, errPropSentinel)
+	err := ef()
+	for b.Loop() {
+		ek.Key(err)
+	}
+}
+
+func BenchmarkDesign_keyRaised_Unstables64r4(b *testing.B) {
+
+	ek, fail := NewErrorKeyer[pkg](nil)
+	if nil != fail {
+		b.Fatalf("failed instantiating ErrorKeyer, got error %v", fail)
+	}
+
+	erts := make([]error, 4096)
+	for i := range 4096 {
+		cause := fmt.Errorf("root cause %d", i)
+		ef := makeRaisedPropChain(64, 4, cause)
+		erts[i] = ef()
+	}
+
+	c := 0
+	for b.Loop() {
+		ek.Key(erts[c % 4096])
+		c++
+	}
+}
+
+func BenchmarkDesign_keyRaised_Unstables64r8(b *testing.B) {
+
+	ek, fail := NewErrorKeyer[pkg](nil)
+	if nil != fail {
+		b.Fatalf("failed instantiating ErrorKeyer, got error %v", fail)
+	}
+
+	erts := make([]error, 4096)
+	for i := range 4096 {
+		cause := fmt.Errorf("root cause %d", i)
+		ef := makeRaisedPropChain(64, 8, cause)
+		erts[i] = ef()
+	}
+
+	c := 0
+	for b.Loop() {
+		ek.Key(erts[c % 4096])
+		c++
+	}
+}
+
+func BenchmarkDesign_keyRaised_Unstables64r16(b *testing.B) {
+
+	ek, fail := NewErrorKeyer[pkg](nil)
+	if nil != fail {
+		b.Fatalf("failed instantiating ErrorKeyer, got error %v", fail)
+	}
+
+	erts := make([]error, 4096)
+	for i := range 4096 {
+		cause := fmt.Errorf("root cause %d", i)
+		ef := makeRaisedPropChain(64, 16, cause)
+		erts[i] = ef()
+	}
+
+	c := 0
+	for b.Loop() {
+		ek.Key(erts[c % 4096])
+		c++
+	}
+}
+
+// ====================================================================================
 var errPropSentinel = NewSentinel("ERROR(245): propagation sentinel")
 
-type errfunc = func() error
+// makeRaisedPropChain is defined in only_test.go
+// as it is also used to support other tests
 
 func makeErrorfPropChain(strsz int, chnsz int) errfunc {
 	makeNextFunc := func(fls int, prev errfunc) errfunc {
