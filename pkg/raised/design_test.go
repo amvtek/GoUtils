@@ -1,8 +1,6 @@
 package raised
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -89,7 +87,7 @@ func BenchmarkDesign_propRces64r4(b *testing.B) {
 }
 
 func BenchmarkDesign_propRaiseds64r4(b *testing.B) {
-	ef := makeRaisedPropChain(64, 4)
+	ef := makeRaisedPropChain(64, 4, errPropSentinel)
 	for b.Loop() {
 		_ = ef()
 	}
@@ -117,7 +115,7 @@ func BenchmarkDesign_propRceTraces64r4(b *testing.B) {
 }
 
 func BenchmarkDesign_propRaisedTraces64r4(b *testing.B) {
-	ef := makeRaisedPropChain(64, 4)
+	ef := makeRaisedPropChain(64, 4, errPropSentinel)
 	for b.Loop() {
 		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
 	}
@@ -145,7 +143,7 @@ func BenchmarkDesign_propRces64r8(b *testing.B) {
 }
 
 func BenchmarkDesign_propRaiseds64r8(b *testing.B) {
-	ef := makeRaisedPropChain(64, 8)
+	ef := makeRaisedPropChain(64, 8, errPropSentinel)
 	for b.Loop() {
 		_ = ef()
 	}
@@ -173,7 +171,7 @@ func BenchmarkDesign_propRceTraces64r8(b *testing.B) {
 }
 
 func BenchmarkDesign_propRaisedTraces64r8(b *testing.B) {
-	ef := makeRaisedPropChain(64, 8)
+	ef := makeRaisedPropChain(64, 8, errPropSentinel)
 	for b.Loop() {
 		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
 	}
@@ -201,7 +199,7 @@ func BenchmarkDesign_propRces256r16(b *testing.B) {
 }
 
 func BenchmarkDesign_propRaiseds256r16(b *testing.B) {
-	ef := makeRaisedPropChain(256, 16)
+	ef := makeRaisedPropChain(256, 16, errPropSentinel)
 	for b.Loop() {
 		_ = ef()
 	}
@@ -229,7 +227,7 @@ func BenchmarkDesign_propRceTraces256r16(b *testing.B) {
 }
 
 func BenchmarkDesign_propRaisedTraces256r16(b *testing.B) {
-	ef := makeRaisedPropChain(256, 16)
+	ef := makeRaisedPropChain(256, 16, errPropSentinel)
 	for b.Loop() {
 		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
 	}
@@ -321,43 +319,6 @@ func makeRcePropChain(strsz int, chnsz int) errfunc {
 	return erf
 }
 
-func makeRaisedPropChain(strsz int, chnsz int) errfunc {
-	makeNextFunc := func(fls int, prev errfunc) errfunc {
-		msg := fmt.Sprintf("[%d]: %s", fls, rndString(strsz))
-		switch fls % 4 {
-		case 0:
-			return func() error {
-				return Trace(prev(), msg)
-			}
-		case 1:
-			return func() error {
-				return Trace(prev(), msg)
-			}
-		case 2:
-			return func() error {
-				return Trace(prev(), msg)
-			}
-		case 3:
-			return func() error {
-				return Trace(prev(), msg)
-			}
-		default:
-			return func() error {
-				return Trace(prev(), msg)
-			}
-		}
-	}
-
-	erf := func() error {
-		return errPropSentinel
-	}
-	for i := range chnsz {
-		erf = makeNextFunc(i, erf)
-	}
-
-	return erf
-}
-
 func makeRaisedPCCachePropChain(strsz int, chnsz int) errfunc {
 	makeNextFunc := func(fls int, prev errfunc) errfunc {
 		msg := fmt.Sprintf("[%d]: %s", fls, rndString(strsz))
@@ -396,7 +357,7 @@ func makeRaisedPCCachePropChain(strsz int, chnsz int) errfunc {
 }
 
 func TestDesign_propRaised(t *testing.T) {
-	errFunc := makeRaisedPropChain(32, 12)
+	errFunc := makeRaisedPropChain(32, 12, errPropSentinel)
 	err := errFunc()
 	t.Logf("err -> %v", err)
 	t.Logf("err %%s \n%s", err)
@@ -405,7 +366,7 @@ func TestDesign_propRaised(t *testing.T) {
 }
 
 func TestDesign_propRaised02(t *testing.T) {
-	errFunc := makeRaisedPropChain(32, 16)
+	errFunc := makeRaisedPropChain(32, 16, errPropSentinel)
 	err := errFunc()
 	t.Logf("err1 -> \n%v", err)
 	err = errFunc()
@@ -929,16 +890,6 @@ type errStr struct {
 
 // ====================================================================================
 // Utilities
-
-var rawB64 = base64.StdEncoding.WithPadding(base64.NoPadding)
-
-// rndString returns a base64 string encoding sz random bytes.
-func rndString(sz int) string {
-	buf := make([]byte, sz)
-	rand.Read(buf)
-
-	return rawB64.EncodeToString(buf)
-}
 
 func TestDesign_RndString(t *testing.T) {
 	t.Logf("rndString(32) -> %s", rndString(32))

@@ -93,7 +93,7 @@ func TestError_Classify(t *testing.T) {
 
 func TestError_Compression(t *testing.T) {
 	// produce a chain longer than traceSize to trigger compression
-	errFunc := makeRaisedPropChain(16, traceSize+4)
+	errFunc := makeRaisedPropChain(16, traceSize+4, errPropSentinel)
 	err := errFunc()
 
 	et, ok := err.(*errTrace)
@@ -118,7 +118,7 @@ func TestError_Compression(t *testing.T) {
 }
 
 func TestError_Show(t *testing.T) {
-	errFunc := makeRaisedPropChain(16, traceSize+8)
+	errFunc := makeRaisedPropChain(16, traceSize+8, errPropSentinel)
 	err := errFunc()
 
 	t.Logf("err.Error() ->\n%v", err)
