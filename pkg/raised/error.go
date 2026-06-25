@@ -153,26 +153,7 @@ func (self *errTrace) Error() string {
 		return ""
 	}
 
-	// determine caching keys
-	var start int
-	if self.next > traceSize {
-		start = traceSize - 1
-	} else {
-		start = self.next - 1
-	}
-	k1 := self.pcs[start]
-	k2 := self.msgs[start]
-
-	smr, rs := summaryCache.Get(k1, k2)
-	switch rs {
-	case cchMiss:
-		self._summary = self.genSummary()
-	case cchMissCacheNew:
-		self._summary = self.genSummary()
-		summaryCache.Set(k1, k2, self._summary)
-	case cchHit:
-		self._summary = smr
-	}
+	self._summary = self.genSummary()
 
 	return self._summary
 }
@@ -191,20 +172,7 @@ func (self *errTrace) Trace() string {
 		return ""
 	}
 
-	// determine caching keys
-	k1 := traceL1Key{turnCount: self.next, pcs: self.pcs}
-	k2 := traceL2Key{cause: self.causeString(), msgs: self.msgs}
-
-	trc, rs := traceCache.Get(k1, k2)
-	switch rs {
-	case cchMiss:
-		self._trace = self.genTrace()
-	case cchMissCacheNew:
-		self._trace = self.genTrace()
-		traceCache.Set(k1, k2, self._trace)
-	case cchHit:
-		self._trace = trc
-	}
+	self._trace = self.genTrace()
 
 	return self._trace
 }
@@ -284,9 +252,10 @@ func (self *errTrace) genSummary() string {
 	msg := self.msgs[start]
 
 	// retrieve file/line string
-	fls := getFileLines(self.pcs[start : 1+start])[0]
+	var info pcInfo
+	loadPCInfo(self.pcs[start], &info)
 
-	return msg + fls
+	return msg + info.tfl
 }
 
 // genTrace renders the full traceback string across all recorded steps.
@@ -311,20 +280,31 @@ func (self *errTrace) genTrace() string {
 		start = maxstart
 	}
 
-	// render full error trace
-	// note that the trace is "compressed" if it has more than traceSize turns
+	// prepare lines buffer (used to avoid allocating)
+	var line string
+	var lns [4 + 2*traceSize]string
+	var size int
+	lines := lns[:0]
+
+	line = "Traceback [most recent call first]:\n"
+	size += len(line)
+	lines = append(lines, line)
+
 	var omitfmt string
-	var tb strings.Builder
-	tb.WriteString("Traceback [most recent call first]:\n")
-	fls := getFileLines(self.pcs[:1+start])
+	var info pcInfo
 	msgs := self.msgs
+	pcs := self.pcs
 	for i := start; i >= 0; i -= 1 {
+		// buffer trace msg
+		line = msgs[i]
+		size += len(line)
+		lines = append(lines, line)
 
-		// write trace msg
-		tb.WriteString(msgs[i])
-
-		// write trace file/line
-		tb.WriteString(fls[i])
+		// buffer trace file/line
+		loadPCInfo(pcs[i], &info)
+		line = info.tfl
+		size += len(line)
+		lines = append(lines, line)
 
 		// insert misscount if it is > 0
 		if i == misspos {
@@ -333,12 +313,26 @@ func (self *errTrace) genTrace() string {
 			} else {
 				omitfmt = "    [%d omissions...]\n"
 			}
-			tb.WriteString(fmt.Sprintf(omitfmt, misscount))
+			line = fmt.Sprintf(omitfmt, misscount) // 1 extra alloc, could be avoided...
+			size += len(line)
+			lines = append(lines, line)
 		}
 	}
 	if cause != msgs[0] {
-		tb.WriteString("Caused by:\n  ")
-		tb.WriteString(cause)
+		line = "Caused by:\n  "
+		size += len(line)
+		lines = append(lines, line)
+
+		line = cause
+		size += len(line)
+		lines = append(lines, line)
+	}
+
+	// render full error trace
+	var tb strings.Builder
+	tb.Grow(size) // only 1 alloc
+	for _, ln := range lines {
+		tb.WriteString(ln)
 	}
 
 	return tb.String()
@@ -409,59 +403,6 @@ func (self *errTraceSnapshot) entryPoint() uintptr {
 	}
 }
 
-// getFileLines resolves a slice of PCs to formatted file/line strings.
-func getFileLines(pcs []uintptr) []string {
-	if 0 == len(pcs) {
-		return nil
-	}
-
-	fls := make([]string, 0, len(pcs))
-
-	frames := runtime.CallersFrames(pcs)
-	var frame runtime.Frame
-	var more bool
-	var filename, fileline, funcname, pkgpath string
-	var dotpos int
-	for {
-		frame, more = frames.Next()
-
-		// extract base filename
-		filename = filepath.Base(frame.File)
-
-		// funcname in canonical form module/package.funcname[.component]
-		// funcname may have more than 1 component if func is instantiated dynamically by a factory
-		funcname = frame.Function
-
-		// extract pkgpath in canonical form module/package
-		dotpos = strings.LastIndex(funcname, "/")
-		if dotpos < 0 {
-			dotpos = 0
-		}
-		dotpos += strings.Index(funcname[dotpos:], ".")
-		if dotpos >= 0 {
-			pkgpath = funcname[:dotpos]
-
-			// filename is in canonical form module/package/filename
-			// module is relative to current buildModPath
-			filename, _ = strings.CutPrefix(path.Join(pkgpath, filename), buildModPath)
-
-			fileline = fmt.Sprintf(filelineFmt, filename, frame.Line)
-
-		} else {
-
-			fileline = missFileline
-		}
-
-		fls = append(fls, fileline)
-
-		if !more {
-			break
-		}
-	}
-
-	return fls
-}
-
 // buildModPath is the module path prefix stripped from file names in traces.
 var buildModPath string
 
@@ -496,7 +437,8 @@ func addCallerInfo[K ~int](err *errTrace, flk K, msg string, skip int) {
 	err.msgs[pos] = strings.TrimSpace(msg)
 
 	// record module "entry point"
-	if err.epc == 0 && isLocal(pc) {
+	local := isLocal(pc)
+	if local && err.epc == 0 {
 		err.epc = pc
 	}
 
@@ -507,21 +449,11 @@ func addCallerInfo[K ~int](err *errTrace, flk K, msg string, skip int) {
 	err.next += 1
 }
 
-// isLocal returns true if pc is a program counter within "project" module.
-// TODO: we need an heuristic in case module is undefined.
-func isLocal(pc uintptr) bool {
-	// FuncForPC does not alloc where as CallersFrames do
-	if fn := runtime.FuncForPC(pc - 1); fn != nil && pc > 0 {
-		return strings.HasPrefix(fn.Name(), buildModPath)
-	}
-	return false
-}
-
 // ---
 // program counter resolution caching
 
 // pcCache stores resolved program counters keyed by pckey, shared across
-// all TraceAt call sites.
+// all Trace call sites.
 var pcCache sync.Map
 
 // pckey is the cache key for getPC.
@@ -564,21 +496,120 @@ func getPC[K ~int](ck pckey[K]) uintptr {
 	return pc
 }
 
-// ---
-// Error() & Trace() caching
+// pcInfoCache is a process-wide store mapping program counter values to their
+// resolved pcInfo.
+var pcInfoCache sync.Map
+
+// pcInfo holds the resolved file/line information for a single program counter,
+// cached to amortize the cost of runtime.CallersFrames across repeated lookups
+// of the same PC.
+type pcInfo struct {
+	// pc is the program counter this entry was resolved from.
+	pc uintptr
+
+	// trace fileline string (optimised for reading)
+	tfl string
+
+	// hash fileline slice (used for error key hashing)
+	hfl []byte
+
+	// true if file is part of project
+	local bool
+}
+
+// isLocal returns true if pc is a program counter within "project" module.
+// isLocal has side effects, it stores file/line information in  pcInfoCache.
+func isLocal(pc uintptr) bool {
+	if 0 == pc {
+		return false
+	}
+
+	var info pcInfo
+	var ok bool
+
+	val, found := pcInfoCache.Load(pc)
+	if found {
+		info, ok = val.(pcInfo)
+		if !ok {
+			info.pc = 0
+			pcInfoCache.CompareAndDelete(pc, val)
+		}
+	}
+	if 0 == info.pc {
+		info.pc = pc
+
+		pcs := []uintptr{pc}
+		frames := runtime.CallersFrames(pcs)
+		frame, _ := frames.Next()
+
+		// extract base filename
+		basename := filepath.Base(frame.File)
+
+		// funcname in canonical form module/package.funcname[.component]
+		// funcname may have more than 1 component if func is instantiated dynamically by a factory
+		funcname := frame.Function
+
+		// extract pkgpath in canonical form module/package
+		dotpos := strings.LastIndex(funcname, "/")
+		if dotpos < 0 {
+			dotpos = 0
+		}
+		dotpos += strings.Index(funcname[dotpos:], ".")
+		if dotpos >= 0 {
+			pkgpath := funcname[:dotpos]
+			filename := path.Join(pkgpath, basename)
+
+			info.hfl = fmt.Appendf(nil, filelineFmt, filename, frame.Line)
+
+			// filename is in canonical form module/package/filename
+			// module is relative to current buildModPath
+			filename, local := strings.CutPrefix(filename, buildModPath)
+			info.local = local
+			info.tfl = fmt.Sprintf(filelineFmt, filename, frame.Line)
+
+		} else {
+
+			info.tfl = missFileline
+			info.hfl = []byte(missFileline)
+		}
+		val, _ = pcInfoCache.LoadOrStore(pc, info)
+		info = val.(pcInfo) // if val was again invalid this would indicate a big issue, better panic in this case
+	}
+
+	return info.local
+
+}
+
+// noPCInfo is the sentinel pcInfo returned by loadPCInfo when a program counter
+// cannot be resolved or is not present in pcInfoCache.
+var noPCInfo = pcInfo{tfl: missFileline, hfl: []byte(missFileline)}
+
+// loadPCInfo retrieves the cached pcInfo for pc into dst.
+// Returns true if a valid entry was found in pcInfoCache.
+func loadPCInfo(pc uintptr, dst *pcInfo) bool {
+	var ok, valid bool
+	info := noPCInfo
+
+	val, ok := pcInfoCache.Load(pc)
+	if ok {
+		info, valid = val.(pcInfo)
+		if !valid {
+			pcInfoCache.CompareAndDelete(pc, val)
+			info = noPCInfo
+			ok = false
+		}
+	}
+	*dst = info
+
+	return ok
+}
 
 // tickInterval is the time window duration used by the package-level scClock,
 // controlling how quickly summaryCache and traceCache slot states evolve.
 const tickInterval = 16 * time.Second
 
 // ticks is the shared clock driving summaryCache and traceCache.
-// summaryCache keys on (mostRecentPC, mostRecentMsg) and caches Error() output.
-// traceCache keys on (pcs+turnCount, cause+msgs) and caches Trace() output.
-var (
-	ticks        = &scClock{}
-	summaryCache = &timedCache[uintptr, string, string]{clock: ticks}
-	traceCache   = &timedCache[traceL1Key, traceL2Key, string]{clock: ticks}
-)
+var ticks = &scClock{}
 
 func init() {
 	err := ticks.Init(tickInterval)
@@ -591,19 +622,3 @@ func init() {
 // the module entry point, the recorded propagation PCs, and the total Trace
 // call count.
 type L1Key = [2 + traceSize]uintptr
-
-// traceL1Key is the stable outer key for traceCache, derived from the recorded
-// PCs and total turn count. Two errTrace values sharing this key took the same
-// code path and map to the same cacheSlot.
-type traceL1Key struct {
-	pcs       [traceSize]uintptr
-	turnCount int
-}
-
-// traceL2Key is the inner key within a traceCache cacheSlot, derived from the
-// cause string and message array. It discriminates errors that share a code path
-// but differ in cause or per-step messages.
-type traceL2Key struct {
-	cause string
-	msgs  [traceSize]string
-}
