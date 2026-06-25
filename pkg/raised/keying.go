@@ -11,6 +11,13 @@ import (
 // keySize is the number of bytes in an ErrorKey.
 const keySize = 16
 
+var (
+	tagCause         = []byte("CS")
+	tagNext          = []byte("NX")
+	tagFilelineCount = []byte("FLC")
+	tagFileline      = []byte("FLN")
+)
+
 // ErrorKey is a fixed-size hash derived from an error's propagation path and
 // terminal error identity. Two errors sharing the same ErrorKey represent the
 // same problem: identical code path and equivalent root cause.
@@ -164,14 +171,14 @@ func (self *sentinelErrorKeyer[T]) Key(err error) (ErrorKey, bool) {
 
 	// ---
 	// cause component
-	hs.Write([]byte("CS"))
+	hs.Write(tagCause)
 	binary.BigEndian.PutUint64(ib[:], uint64(len(k2)))
 	hs.Write(ib[:])
 	hs.Write([]byte(k2))
 
 	// ---
 	// next component
-	hs.Write([]byte("NX"))
+	hs.Write(tagNext)
 	binary.BigEndian.PutUint64(ib[:], uint64(snp.next))
 	hs.Write(ib[:])
 
@@ -187,23 +194,25 @@ func (self *sentinelErrorKeyer[T]) Key(err error) (ErrorKey, bool) {
 		flc = traceSize
 	}
 	flc += 1 // pc are read from k1 which is [epc|pcs...|next]
-	hs.Write([]byte("FLC"))
+	hs.Write(tagFilelineCount)
 	binary.BigEndian.PutUint64(ib[:], uint64(flc))
 	hs.Write(ib[:])
 
 	// hash each fileline in ert code path
 	// flc allows excluding next which is not a valid pc
-	fls := getFileLines(k1[:flc])
-	for _, fln := range fls {
-		hs.Write([]byte("FLN"))
-		binary.BigEndian.PutUint64(ib[:], uint64(len(fln)))
+	var info pcInfo
+	for i := range flc {
+		loadPCInfo(k1[i], &info)
+		hs.Write(tagFileline)
+		binary.BigEndian.PutUint64(ib[:], uint64(len(info.hfl)))
 		hs.Write(ib[:])
-		hs.Write([]byte(fln))
+		hs.Write(info.hfl)
 	}
 
 	// ---
 	// copy hash in erk
-	copy(erk[:], hs.Sum(nil))
+	var buf [32]byte
+	copy(erk[:], hs.Sum(buf[:0]))
 
 	if rs == cchMissCacheNew {
 		self.tc.Set(k1, k2, erk)
