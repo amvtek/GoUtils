@@ -44,10 +44,6 @@ func TestTmp_Join(t *testing.T) {
 	}
 }
 
-func TestDesign_Lab(t *testing.T) {
-	t.Logf("f03() -> %+v", f03())
-}
-
 var errOne = NewSentinel("ERROR(1): 1 more time...")
 
 func f01() error {
@@ -63,14 +59,10 @@ func f03() error {
 }
 
 // ====================================================================================
-// Propagating fmt.Errorf vs using raised.TraceAt
+// Propagating fmt.Errorf vs raised.Trace vs raised.TraceAt (aka PCCache) vs github.com/pkg/errors (aka Rce)
 //
 // To run those benchmarks use:
 // go test ./pkg/raised -bench Design_prop -benchmem
-//
-// Those benchmarks show that propagating an error using raised.Trace requires a single alloc
-// Whereas fmt.Errorf number of allocs grow linearily with trace size.
-// raised Error rendering time performance is also much better than what fmt.Errorf allows.
 
 func BenchmarkDesign_propErrorfs64r4(b *testing.B) {
 	ef := makeErrorfPropChain(64, 4)
@@ -93,38 +85,10 @@ func BenchmarkDesign_propRaiseds64r4(b *testing.B) {
 	}
 }
 
-func BenchmarkDesign_propRaisedPCCaches64r4(b *testing.B) {
-	ef := makeRaisedPCCachePropChain(64, 4)
+func BenchmarkDesign_propPCCaches64r4(b *testing.B) {
+	ef := makePCCachePropChain(64, 4)
 	for b.Loop() {
 		_ = ef()
-	}
-}
-
-func BenchmarkDesign_propErrorfTraces64r4(b *testing.B) {
-	ef := makeErrorfPropChain(64, 4)
-	for b.Loop() {
-		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
-	}
-}
-
-func BenchmarkDesign_propRceTraces64r4(b *testing.B) {
-	ef := makeRcePropChain(64, 4)
-	for b.Loop() {
-		_ = fmt.Sprintf("%+v", ef())
-	}
-}
-
-func BenchmarkDesign_propRaisedTraces64r4(b *testing.B) {
-	ef := makeRaisedPropChain(64, 4, errPropSentinel)
-	for b.Loop() {
-		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
-	}
-}
-
-func BenchmarkDesign_propRaisedPCCacheTraces64r4(b *testing.B) {
-	ef := makeRaisedPCCachePropChain(64, 4)
-	for b.Loop() {
-		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
 	}
 }
 
@@ -149,38 +113,10 @@ func BenchmarkDesign_propRaiseds64r8(b *testing.B) {
 	}
 }
 
-func BenchmarkDesign_propRaisedPCCaches64r8(b *testing.B) {
-	ef := makeRaisedPCCachePropChain(64, 8)
+func BenchmarkDesign_propPCCaches64r8(b *testing.B) {
+	ef := makePCCachePropChain(64, 8)
 	for b.Loop() {
 		_ = ef()
-	}
-}
-
-func BenchmarkDesign_propErrorfTraces64r8(b *testing.B) {
-	ef := makeErrorfPropChain(64, 8)
-	for b.Loop() {
-		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
-	}
-}
-
-func BenchmarkDesign_propRceTraces64r8(b *testing.B) {
-	ef := makeRcePropChain(64, 8)
-	for b.Loop() {
-		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
-	}
-}
-
-func BenchmarkDesign_propRaisedTraces64r8(b *testing.B) {
-	ef := makeRaisedPropChain(64, 8, errPropSentinel)
-	for b.Loop() {
-		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
-	}
-}
-
-func BenchmarkDesign_propRaisedPCCacheTraces64r8(b *testing.B) {
-	ef := makeRaisedPCCachePropChain(64, 8)
-	for b.Loop() {
-		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
 	}
 }
 
@@ -205,36 +141,188 @@ func BenchmarkDesign_propRaiseds256r16(b *testing.B) {
 	}
 }
 
-func BenchmarkDesign_propRaisedPCCaches256r16(b *testing.B) {
-	ef := makeRaisedPCCachePropChain(256, 16)
+func BenchmarkDesign_propPCCaches256r16(b *testing.B) {
+	ef := makePCCachePropChain(256, 16)
 	for b.Loop() {
 		_ = ef()
 	}
 }
 
-func BenchmarkDesign_propErrorfTraces256r16(b *testing.B) {
+// ====================================================================================
+// Rendering errors fmt.Errorf vs raised.Trace vs raised.TraceAt (aka PCCache) vs github.com/pkg/errors (aka Rce)
+//
+// To run those benchmarks use:
+// go test ./pkg/raised -bench Design_error -benchmem
+
+func BenchmarkDesign_errorErrorfs64r4(b *testing.B) {
+	ef := makeErrorfPropChain(64, 4)
+	for b.Loop() {
+		_ = ef().Error()
+	}
+}
+
+func BenchmarkDesign_errorRces64r4(b *testing.B) {
+	ef := makeRcePropChain(64, 4)
+	for b.Loop() {
+		_ = ef().Error()
+	}
+}
+
+func BenchmarkDesign_errorRaiseds64r4(b *testing.B) {
+	ef := makeRaisedPropChain(64, 4, errPropSentinel)
+	for b.Loop() {
+		_ = ef().Error()
+	}
+}
+
+func BenchmarkDesign_errorPCCaches64r4(b *testing.B) {
+	ef := makePCCachePropChain(64, 4)
+	for b.Loop() {
+		_ = ef().Error()
+	}
+}
+
+func BenchmarkDesign_errorErrorfs64r8(b *testing.B) {
+	ef := makeErrorfPropChain(64, 8)
+	for b.Loop() {
+		_ = ef().Error()
+	}
+}
+
+func BenchmarkDesign_errorRces64r8(b *testing.B) {
+	ef := makeRcePropChain(64, 8)
+	for b.Loop() {
+		_ = ef().Error()
+	}
+}
+
+func BenchmarkDesign_errorRaiseds64r8(b *testing.B) {
+	ef := makeRaisedPropChain(64, 8, errPropSentinel)
+	for b.Loop() {
+		_ = ef().Error()
+	}
+}
+
+func BenchmarkDesign_errorPCCaches64r8(b *testing.B) {
+	ef := makePCCachePropChain(64, 8)
+	for b.Loop() {
+		_ = ef().Error()
+	}
+}
+
+func BenchmarkDesign_errorErrorfs256r16(b *testing.B) {
+	ef := makeErrorfPropChain(256, 16)
+	for b.Loop() {
+		_ = ef().Error()
+	}
+}
+
+func BenchmarkDesign_errorRces256r16(b *testing.B) {
+	ef := makeRcePropChain(256, 16)
+	for b.Loop() {
+		_ = ef().Error()
+	}
+}
+
+func BenchmarkDesign_errorRaiseds256r16(b *testing.B) {
+	ef := makeRaisedPropChain(256, 16, errPropSentinel)
+	for b.Loop() {
+		_ = ef().Error()
+	}
+}
+
+func BenchmarkDesign_errorPCCaches256r16(b *testing.B) {
+	ef := makePCCachePropChain(256, 16)
+	for b.Loop() {
+		_ = ef().Error()
+	}
+}
+
+// ====================================================================================
+// Rendering traces fmt.Errorf vs raised.Trace vs raised.TraceAt (aka PCCache) vs github.com/pkg/errors (aka Rce)
+//
+// To run those benchmarks use:
+// go test ./pkg/raised -bench Design_trace -benchmem
+
+func BenchmarkDesign_traceErrorfs64r4(b *testing.B) {
+	ef := makeErrorfPropChain(64, 4)
+	for b.Loop() {
+		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
+	}
+}
+
+func BenchmarkDesign_traceRces64r4(b *testing.B) {
+	ef := makeRcePropChain(64, 4)
+	for b.Loop() {
+		_ = fmt.Sprintf("%+v", ef())
+	}
+}
+
+func BenchmarkDesign_traceRaiseds64r4(b *testing.B) {
+	ef := makeRaisedPropChain(64, 4, errPropSentinel)
+	for b.Loop() {
+		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
+	}
+}
+
+func BenchmarkDesign_tracePCCaches64r4(b *testing.B) {
+	ef := makePCCachePropChain(64, 4)
+	for b.Loop() {
+		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
+	}
+}
+
+func BenchmarkDesign_traceErrorfs64r8(b *testing.B) {
+	ef := makeErrorfPropChain(64, 8)
+	for b.Loop() {
+		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
+	}
+}
+
+func BenchmarkDesign_traceRces64r8(b *testing.B) {
+	ef := makeRcePropChain(64, 8)
+	for b.Loop() {
+		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
+	}
+}
+
+func BenchmarkDesign_traceRaiseds64r8(b *testing.B) {
+	ef := makeRaisedPropChain(64, 8, errPropSentinel)
+	for b.Loop() {
+		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
+	}
+}
+
+func BenchmarkDesign_tracePCCaches64r8(b *testing.B) {
+	ef := makePCCachePropChain(64, 8)
+	for b.Loop() {
+		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
+	}
+}
+
+func BenchmarkDesign_traceErrorfs256r16(b *testing.B) {
 	ef := makeErrorfPropChain(256, 16)
 	for b.Loop() {
 		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
 	}
 }
 
-func BenchmarkDesign_propRceTraces256r16(b *testing.B) {
+func BenchmarkDesign_traceRces256r16(b *testing.B) {
 	ef := makeRcePropChain(256, 16)
 	for b.Loop() {
 		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
 	}
 }
 
-func BenchmarkDesign_propRaisedTraces256r16(b *testing.B) {
+func BenchmarkDesign_traceRaiseds256r16(b *testing.B) {
 	ef := makeRaisedPropChain(256, 16, errPropSentinel)
 	for b.Loop() {
 		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
 	}
 }
 
-func BenchmarkDesign_propRaisedPCCacheTraces256r16(b *testing.B) {
-	ef := makeRaisedPCCachePropChain(256, 16)
+func BenchmarkDesign_tracePCCaches256r16(b *testing.B) {
+	ef := makePCCachePropChain(256, 16)
 	for b.Loop() {
 		_ = fmt.Sprintf("%+v", ef()) // using fmt results in 1 extra alloc...
 	}
@@ -433,7 +521,7 @@ func makeRcePropChain(strsz int, chnsz int) errfunc {
 	return erf
 }
 
-func makeRaisedPCCachePropChain(strsz int, chnsz int) errfunc {
+func makePCCachePropChain(strsz int, chnsz int) errfunc {
 	makeNextFunc := func(fls int, prev errfunc) errfunc {
 		msg := fmt.Sprintf("[%d]: %s", fls, rndString(strsz))
 		switch fls % 4 {
