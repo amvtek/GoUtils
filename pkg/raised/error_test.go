@@ -127,7 +127,7 @@ func TestError_Show(t *testing.T) {
 }
 
 func TestError_FormatArgs(t *testing.T) {
-	err := Trace(errTraceSentinel, "value is %d", 42)
+	err := Tracef(errTraceSentinel, "value is %d", 42)
 
 	if !strings.Contains(err.Error(), "value is 42") {
 		t.Errorf("expected Error() to contain %q, got %q", "value is 42", err.Error())

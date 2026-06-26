@@ -113,7 +113,7 @@ func NewSentinelErrorKeyer[T any](hf HashFunc, ukl UnstableKeyListener) (ErrorKe
 	}
 	h := hf()
 	if h.Size() < keySize {
-		return nil, Trace(ErrInvalidHash, "insufficient hash size %d < %d", h.Size(), keySize)
+		return nil, Tracef(ErrInvalidHash, "insufficient hash size %d < %d", h.Size(), keySize)
 	}
 
 	sk := sentinelErrorKeyer[T]{hf: hf, tc: &keyCache{clock: ticks}, ukl: ukl}
