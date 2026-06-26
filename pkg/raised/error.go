@@ -72,30 +72,6 @@ func Trace(err error, msg string, args ...any) Error {
 	return rv
 }
 
-// TraceAt behaves like Trace but caches the call site PC using flk as a
-// lookup key, avoiding repeated runtime.Callers calls on hot paths.
-// flk must be a non-zero integer constant unique within the calling package.
-// If args are provided, msg is used as a format string.
-// Returns nil if err is nil.
-func TraceAt[K ~int](flk K, err error, msg string, args ...any) Error {
-	if nil == err {
-		return nil
-	}
-	if len(args) > 0 {
-		msg = fmt.Sprintf(msg, args...)
-	}
-	rv, ok := err.(*errTrace)
-	if !ok {
-		rv = &errTrace{cause: err}
-	} else {
-		// rv not created here, hence we lock
-		rv.mut.Lock()
-		defer rv.mut.Unlock()
-	}
-	addCallerInfo(rv, flk, msg, 1)
-	return rv
-}
-
 // errTrace is an error used to track the propagation of a root error...
 // It records the propagation path as a fixed-size sequence of (PC, message)
 // pairs; middle entries are compressed out when traceSize is exceeded,
