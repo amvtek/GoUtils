@@ -49,11 +49,31 @@ type Error interface {
 }
 
 // Trace records a propagation step for err, attaching msg and the call site PC
-// to the trace. If err is already a traced error it is extended in place;
+// to the trace. If err is already a traced error it is extended in place,
+// otherwise a new trace is created with err as its cause.
+// Returns nil if err is nil.
+func Trace(err error, msg string) Error {
+	if nil == err {
+		return nil
+	}
+	rv, ok := err.(*errTrace)
+	if !ok {
+		rv = &errTrace{cause: err}
+	} else {
+		// rv not created here, hence we lock
+		rv.mut.Lock()
+		defer rv.mut.Unlock()
+	}
+	addCallerInfo(rv, 0, msg, 1)
+	return rv
+}
+
+// Tracef records a propagation step for err, attaching msg and the call site PC
+// to the trace. If err is already a traced error it is extended in place,
 // otherwise a new trace is created with err as its cause.
 // If args are provided, msg is used as a format string.
 // Returns nil if err is nil.
-func Trace(err error, msg string, args ...any) Error {
+func Tracef(err error, msg string, args ...any) Error {
 	if nil == err {
 		return nil
 	}
